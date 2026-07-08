@@ -1,0 +1,15 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs/temp
+*.log
+.tmp/
+tmp/
+
+# Future build artifacts
+/dist/
+/build/
+/export/
