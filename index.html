@@ -176,6 +176,79 @@
       .mini p, li { color: var(--muted); line-height: 1.55; }
       .mini ul { margin: 0; padding-left: 20px; }
 
+      .setup {
+        padding: clamp(24px, 4vw, 40px);
+      }
+
+      .setup h2 {
+        margin: 0 0 12px;
+        font-size: clamp(1.8rem, 4vw, 3rem);
+        letter-spacing: -0.04em;
+      }
+
+      .setup .lead {
+        margin: 0 0 24px;
+        color: var(--muted);
+        font-size: 1.08rem;
+        line-height: 1.6;
+        max-width: 900px;
+      }
+
+      .steps {
+        display: grid;
+        gap: 16px;
+      }
+
+      .step {
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 18px;
+        padding: 18px;
+        background: rgba(255, 255, 255, 0.045);
+      }
+
+      .step h3 {
+        margin: 0 0 10px;
+        color: var(--accent-2);
+      }
+
+      .step p {
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .step p:first-of-type { margin-top: 0; }
+      .step p:last-child { margin-bottom: 0; }
+
+      code, pre {
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+
+      code {
+        color: #d8f3ff;
+      }
+
+      pre {
+        margin: 12px 0 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        color: #eef5ff;
+        background: rgba(1, 7, 18, 0.72);
+        border: 1px solid rgba(121, 215, 255, 0.16);
+        border-radius: 14px;
+        padding: 14px;
+        line-height: 1.45;
+        font-size: 0.92rem;
+      }
+
+      .note {
+        margin-top: 18px;
+        padding: 16px 18px;
+        border-radius: 16px;
+        color: #fff1c7;
+        background: rgba(245, 199, 107, 0.08);
+        border: 1px solid rgba(245, 199, 107, 0.18);
+      }
+
       footer {
         margin-top: 32px;
         color: var(--muted);
@@ -244,6 +317,110 @@
             <li>Salvage, wounds, and repairs</li>
           </ul>
         </article>
+      </section>
+
+      <section class="card setup" id="developer-setup">
+        <h2>New Developer Setup</h2>
+        <p class="lead">
+          If you are joining the project from a fresh computer, follow these steps to get the repo locally and let
+          an agent such as Codex or Claude Code interview you, plan the prototype, and start implementing safely.
+        </p>
+
+        <div class="steps">
+          <article class="step">
+            <h3>1. Create the basic accounts</h3>
+            <p>Make sure you can sign into these before installing tools:</p>
+            <ul>
+              <li><a href="https://github.com/signup">GitHub account</a> — accept the Space Game collaborator invite.</li>
+              <li><a href="https://chatgpt.com/codex">Codex</a> access, if you want to use OpenAI Codex.</li>
+              <li><a href="https://claude.ai/code">Claude Code</a> access, if you want to use Anthropic Claude Code.</li>
+            </ul>
+          </article>
+
+          <article class="step">
+            <h3>2. Download the core tools</h3>
+            <p>Install these first. Restart your terminal afterward so the commands are available.</p>
+            <ul>
+              <li><a href="https://git-scm.com/downloads">Git</a></li>
+              <li><a href="https://cli.github.com/">GitHub CLI</a></li>
+              <li><a href="https://nodejs.org/en/download">Node.js LTS</a></li>
+              <li><a href="https://code.visualstudio.com/">Visual Studio Code</a></li>
+              <li><a href="https://godotengine.org/download/">Godot 4</a> — recommended once the playable prototype begins.</li>
+            </ul>
+          </article>
+
+          <article class="step">
+            <h3>3. Log into GitHub from the terminal</h3>
+            <p>Open Terminal, PowerShell, or VS Code's integrated terminal and run:</p>
+            <pre>gh auth login</pre>
+            <p>Choose GitHub.com, HTTPS, and browser login. Then verify:</p>
+            <pre>gh auth status</pre>
+          </article>
+
+          <article class="step">
+            <h3>4. Clone the project</h3>
+            <p>Put the repo somewhere easy to find:</p>
+            <pre>mkdir -p ~/projects
+cd ~/projects
+gh repo clone TsilenT/Space-Game
+cd Space-Game
+code .</pre>
+            <p>If <code>code .</code> does not work yet, open VS Code manually and choose <strong>File → Open Folder</strong>.</p>
+          </article>
+
+          <article class="step">
+            <h3>5. Start with Codex</h3>
+            <p>Open Codex in the project folder and give it this exact prompt:</p>
+            <pre>You are helping me develop Space Game, a public repo at TsilenT/Space-Game.
+First, read README.md and SPEC.md. Do not write code yet.
+Ask me 8 to 12 focused questions about what kind of first playable prototype I want.
+Group the questions by: engine, tactical combat, art style, ship management, and first milestone.
+After I answer, summarize my decisions and propose a small implementation plan with bite-sized tasks.</pre>
+            <p>After Codex asks questions and you answer, use this follow-up:</p>
+            <pre>Based on my answers, create a first prototype plan.
+Prefer the smallest playable loop: one player ship, one enemy ship, four crew, three enemies, movement, shooting, win/loss, salvage, and repair.
+Do not overbuild. Add exact files to create, exact commands to run, and how I should test each step.</pre>
+          </article>
+
+          <article class="step">
+            <h3>6. Or start with Claude Code</h3>
+            <p>Open Claude Code in the cloned repo and use this exact prompt:</p>
+            <pre>Read README.md and SPEC.md for Space Game.
+Act as a careful game-development partner.
+Before changing files, interview me about the prototype I want.
+Ask concise questions one section at a time, then wait for my answers.
+Your goal is to turn the spec into a Godot 4 prototype plan that a beginner collaborator can follow.</pre>
+            <p>When you are ready for Claude to write the plan:</p>
+            <pre>Now write docs/prototype-plan.md.
+The plan should target Godot 4 and a tiny vertical slice.
+Include setup steps, scene structure, scripts, data files, testing/playtest steps, and a checklist for the first pull request.
+Do not implement yet; make the plan easy to review.</pre>
+          </article>
+
+          <article class="step">
+            <h3>7. First safe implementation prompt</h3>
+            <p>Once the plan looks good, ask the agent to implement only the first slice:</p>
+            <pre>Implement only Task 1 from docs/prototype-plan.md.
+Keep the change small.
+After editing, show me the files changed, commands run, and how to manually verify it.
+Do not start Task 2 until I approve.</pre>
+          </article>
+
+          <article class="step">
+            <h3>8. Save work and open a pull request</h3>
+            <p>When a small task is working, commit and push it:</p>
+            <pre>git status
+git add .
+git commit -m "feat: start Space Game prototype"
+git push</pre>
+            <p>Then open a pull request:</p>
+            <pre>gh pr create --title "Start Space Game prototype" --body "Adds the first small prototype slice for review."</pre>
+          </article>
+        </div>
+
+        <div class="note">
+          Agent rule of thumb: ask it to interview you first, plan second, implement third. If it tries to build the whole game at once, tell it to stop and shrink the task.
+        </div>
       </section>
 
       <footer>
