@@ -11,7 +11,12 @@ This repository currently contains the public design specification and a small s
 ## Documents
 
 - [Specification](SPEC.md)
-- [Public Site](https://spacegame.devits.ai)
+- [Coding-agent guide](AGENTS.md)
+- [Public Site](https://spacegame.stevets.ai)
+
+## Developer Onboarding
+
+This repository expects collaborators to use a capable coding agent such as Codex or Claude Code. Open the repository in the agent and ask it to onboard you; the agent should inspect the project, handle technical setup and GitHub operations, and interview you about unresolved creative decisions. The canonical operating instructions are in [`AGENTS.md`](AGENTS.md), with a Claude Code entry point in [`CLAUDE.md`](CLAUDE.md).
 
 ## Core Idea
 

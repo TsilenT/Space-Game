@@ -517,4 +517,4 @@ This repository begins as the public design home for **Space Game**. It should e
 - Playtest notes.
 - Source code when development begins.
 
-The public site at `spacegame.devits.ai` should publish the current design summary and link back to the repository.
+The public site at `spacegame.stevets.ai` should publish the current design summary and link back to the repository.
