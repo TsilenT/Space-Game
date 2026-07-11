@@ -468,19 +468,28 @@ After the MVP, a vertical slice should include:
 
 ---
 
-## 16. Early Open Questions
+## 16. Decisions and Remaining Questions
 
-These should be answered before implementation planning becomes too detailed.
+### Approved prototype decisions
 
-1. What engine should the prototype use?
-   - Godot 4 is a strong candidate.
-2. Should tactical combat use square grid, hex grid, or free movement with action points?
-3. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?
-4. Should the player ship interior be fully simulated during normal travel?
-5. Should crew classes be rigid, flexible, or equipment-based?
-6. How lethal should the campaign be?
-7. Should the game be serious, comedic, or tonally mixed?
-8. Should missions be procedurally generated, hand-authored, or hybrid?
+1. **Platform:** Browser-first prototype, playable directly at `spacegame.stevets.ai`.
+2. **Technology:** TypeScript, Phaser 4, Vite, and Vitest.
+3. **Tactical geometry:** 2D top-down square grid using action points.
+4. **Architecture:** Deterministic game rules remain pure TypeScript under `src/sim`, independent of Phaser rendering.
+5. **First slice:** A hand-authored tactical boarding encounter before broader campaign or ship-management systems.
+6. **Collaboration:** Coding agents operate setup, dependencies, verification, Git, and GitHub while the human collaborator acts as creative director.
+
+These decisions define the current prototype, not an irreversible promise about a distant production version. Revisit them only when a concrete product requirement justifies the cost.
+
+### Remaining creative questions
+
+1. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?
+2. Should the player ship interior be fully simulated during normal travel?
+3. Should crew roles remain equipment-based or become more class-like?
+4. How lethal should the campaign be?
+5. Should the tone lean serious, comedic, or deliberately mixed?
+6. Should later missions be hand-authored, procedurally generated, or hybrid?
+7. Which tactical system should follow basic movement and shooting: line of sight, cover, overwatch, doors, or environmental hazards?
 
 ---
 
@@ -507,14 +516,14 @@ Suggested first implementation sequence:
 
 ## 18. Repository Purpose
 
-This repository begins as the public design home for **Space Game**. It should eventually contain:
+This repository is the public design and playable prototype home for **Space Game**. It contains:
 
 - This specification.
-- Pitch material.
+- Pitch and design material.
 - Prototype implementation plans.
-- Design notes.
 - Art/audio direction.
-- Playtest notes.
-- Source code when development begins.
+- Playtest notes as development continues.
+- The current Phaser 4 tactical prototype source.
+- Automated simulation tests and GitHub Pages deployment.
 
-The public site at `spacegame.stevets.ai` should publish the current design summary and link back to the repository.
+The public site at `spacegame.stevets.ai` publishes the playable build, current design summary, complete specification, contributor onboarding, and a link back to the repository.
