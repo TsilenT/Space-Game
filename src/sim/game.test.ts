@@ -35,6 +35,10 @@ describe('deterministic tactical simulation', () => {
     expect(next.turn).toBe(2)
     expect(next.units.filter(u => u.team === 'crew').every(u => u.ap === 4)).toBe(true)
   })
+  it('rejects enemy-turn simulation outside the enemy phase', () => {
+    const game = createGame()
+    expect(enemyTurn(game)).toBe(game)
+  })
   it('detects victory and defeat', () => {
     const base = createGame()
     expect(enemyTurn({ ...base, phase: 'enemy', units: base.units.map(u => u.team === 'enemy' ? { ...u, hp: 0 } : u) }).status).toBe('victory')
