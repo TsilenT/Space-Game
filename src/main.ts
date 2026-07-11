@@ -95,3 +95,23 @@ document.addEventListener('keydown', event => {
   else return
   event.preventDefault()
 })
+
+const copyPromptButton = document.querySelector<HTMLButtonElement>('#copy-prompt')
+const kickoffPrompt = document.querySelector<HTMLElement>('#kickoff-prompt')
+const copyStatus = document.querySelector<HTMLElement>('#copy-status')
+
+copyPromptButton?.addEventListener('click', async () => {
+  if (!kickoffPrompt || !copyStatus) return
+  try {
+    await navigator.clipboard.writeText(kickoffPrompt.innerText)
+    copyPromptButton.textContent = 'COPIED'
+    copyStatus.textContent = 'Prompt copied. Paste it into Codex or Claude Code.'
+  } catch {
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(kickoffPrompt)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    copyStatus.textContent = 'Copy was blocked by the browser. The prompt is selected; copy it manually.'
+  }
+})
