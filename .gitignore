@@ -1,3 +1,10 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+build/
+export/
+
 # OS/editor
 .DS_Store
 Thumbs.db
@@ -8,8 +15,3 @@ Thumbs.db
 *.log
 .tmp/
 tmp/
-
-# Future build artifacts
-/dist/
-/build/
-/export/

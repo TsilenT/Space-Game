@@ -28,7 +28,7 @@ Space Game combines FTL-style route pressure and ship management with persistent
 - Resource pressure creates difficult choices.
 - A successful mission may still leave costly consequences.
 
-Godot 4 is the current recommendation, not an irrevocable decision. Confirm the target platform, engine, grid model, and first playable scope with the collaborator before establishing the implementation architecture.
+The approved prototype stack is TypeScript, Phaser 4, Vite, and Vitest, using a 2D top-down square grid. Keep deterministic game rules in `src/sim` independent of Phaser. Do not revisit this decision without a new product requirement.
 
 ## Development Method
 
@@ -38,6 +38,7 @@ Godot 4 is the current recommendation, not an irrevocable decision. Confirm the 
 - For visual changes, inspect the result at desktop and mobile sizes when applicable.
 - Keep documentation current when decisions or setup requirements change.
 - Do not add speculative frameworks, services, dependencies, or asset pipelines before the slice needs them.
+- Before review, run `npm test`, `npm run typecheck`, and `npm run build`. Inspect responsive visual changes in a real browser where tooling permits.
 
 ## GitHub Workflow
 

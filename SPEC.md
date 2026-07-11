@@ -3,7 +3,7 @@
 > **Working title:** Space Game  
 > **Genre:** Roguelite starship survival, squad tactics, and ship/base management  
 > **Primary inspirations:** Faster Than Light and the original X-COM  
-> **Initial target:** Web-readable design repository, then a playable prototype
+> **Initial target:** Playable browser prototype (TypeScript + Phaser 4 + Vite)
 
 ---
 
@@ -484,9 +484,9 @@ These should be answered before implementation planning becomes too detailed.
 
 ---
 
-## 17. Initial Implementation Recommendation
+## 17. Initial Implementation Decision
 
-Start with a Godot 4 prototype focused on the tactical boarding loop.
+The approved foundation is a **2D top-down square-grid browser prototype using TypeScript, Phaser 4, and Vite**. Rules live in a deterministic pure TypeScript simulation, independent of rendering. The first playable focuses on the tactical boarding loop; campaign systems follow after its combat is proven.
 
 Suggested first implementation sequence:
 
