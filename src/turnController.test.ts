@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createGame } from './sim/game'
+import { BOARDING_MISSION } from './sim/map'
 import { TurnController } from './turnController'
 
 describe('TurnController', () => {
@@ -23,5 +24,13 @@ describe('TurnController', () => {
     callback()
     expect(controller.current.turn).toBe(1)
     expect(controller.current.phase).toBe('player')
+  })
+
+  it('restarts the mission definition it was given', () => {
+    const mission = { ...BOARDING_MISSION, id: 'custom-mission', objective: 'Hold the bridge' }
+    const controller = new TurnController(createGame(mission), vi.fn(), () => 1, vi.fn())
+    controller.restart()
+    expect(controller.current.mission.id).toBe('custom-mission')
+    expect(controller.current.objective).toBe('Hold the bridge')
   })
 })

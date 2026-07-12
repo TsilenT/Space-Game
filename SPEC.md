@@ -478,6 +478,10 @@ After the MVP, a vertical slice should include:
 4. **Architecture:** Deterministic game rules remain pure TypeScript under `src/sim`, independent of Phaser rendering.
 5. **First slice:** A hand-authored tactical boarding encounter before broader campaign or ship-management systems.
 6. **Collaboration:** Coding agents operate setup, dependencies, verification, Git, and GitHub while the human collaborator acts as creative director.
+7. **Tactical visibility:** Living crew share explored terrain and current vision, while every attack still requires clear line of sight from the individual shooter. Opaque map cells block sight and fire symmetrically for crew and enemies.
+8. **Next slice priority:** After the tactical visibility foundation, build a deliberately thin end-to-end demo of the encounter, mission, persistent consequence, ship-side recovery, and next-decision loop before adding more tactical or campaign breadth.
+
+This next demo targets the MVP loop in section 14; it is not the broader three-sector post-MVP vertical slice described in section 15.
 
 These decisions define the current prototype, not an irreversible promise about a distant production version. Revisit them only when a concrete product requirement justifies the cost.
 
@@ -489,7 +493,7 @@ These decisions define the current prototype, not an irreversible promise about 
 4. How lethal should the campaign be?
 5. Should the tone lean serious, comedic, or deliberately mixed?
 6. Should later missions be hand-authored, procedurally generated, or hybrid?
-7. Which tactical system should follow basic movement and shooting: line of sight, cover, overwatch, doors, or environmental hazards?
+7. Which tactical system should follow line of sight and fog of war: cover, overwatch, doors, or environmental hazards?
 
 ---
 

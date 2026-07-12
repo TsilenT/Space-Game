@@ -7,6 +7,9 @@ describe('deterministic tactical simulation', () => {
     expect(game.units.filter(u => u.team === 'crew')).toHaveLength(4)
     expect(game.units.filter(u => u.team === 'enemy')).toHaveLength(3)
     expect(game.phase).toBe('player')
+    expect(game.map).toMatchObject({ width: 12, height: 8 })
+    expect(game.map.rooms).toHaveLength(5)
+    expect(game.map.systems).toHaveLength(4)
   })
   it('moves only to reachable walkable unoccupied cells and spends AP', () => {
     let game = selectUnit(createGame(), 'soren')
