@@ -412,9 +412,11 @@ Music should support tension rather than constantly dominate the scene.
 
 ### MVP Goal
 
-Create one playable loop where the player chooses a hostile encounter, boards an enemy ship, completes a turn-based tactical mission, returns with salvage, and spends that salvage on repairs or one upgrade.
+Create one playable loop where the player chooses a hostile encounter, boards an enemy ship, completes a turn-based tactical mission, returns with salvage, and spends that salvage on one recovery choice.
 
-### MVP Must Include
+The current thin whole-loop demo validates that complete sequence with a command screen, a hand-authored boarding mission, persistent consequences, and a return to the next jump. It does not yet claim the complete MVP: the physical player-ship layout, engine room, reaction fire, and upgrade path below remain deliberately deferred.
+
+### Full MVP Must Include
 
 - One player ship layout.
 - One enemy ship layout.
@@ -479,9 +481,9 @@ After the MVP, a vertical slice should include:
 5. **First slice:** A hand-authored tactical boarding encounter before broader campaign or ship-management systems.
 6. **Collaboration:** Coding agents operate setup, dependencies, verification, Git, and GitHub while the human collaborator acts as creative director.
 7. **Tactical visibility:** Living crew share explored terrain and current vision, while every attack still requires clear line of sight from the individual shooter. Opaque map cells block sight and fire symmetrically for crew and enemies.
-8. **Next slice priority:** After the tactical visibility foundation, build a deliberately thin end-to-end demo of the encounter, mission, persistent consequence, ship-side recovery, and next-decision loop before adding more tactical or campaign breadth.
+8. **Whole-loop demo:** The first end-to-end demo connects a fixed strategic contact, the boarding mission, persistent crew and hull consequences, salvage, one recovery choice, and the next fuel-consuming jump. It deliberately repeats the same authored contact rather than pretending to be a broader campaign.
 
-This next demo targets the MVP loop in section 14; it is not the broader three-sector post-MVP vertical slice described in section 15.
+This demo targets the MVP loop in section 14; it is not the broader three-sector post-MVP vertical slice described in section 15.
 
 These decisions define the current prototype, not an irreversible promise about a distant production version. Revisit them only when a concrete product requirement justifies the cost.
 
@@ -527,7 +529,7 @@ This repository is the public design and playable prototype home for **Space Gam
 - Prototype implementation plans.
 - Art/audio direction.
 - Playtest notes as development continues.
-- The current Phaser 4 tactical prototype source.
+- The current Phaser 4 whole-loop browser prototype source.
 - Automated simulation tests and GitHub Pages deployment.
 
 The public site at `spacegame.stevets.ai` publishes the playable build, current design summary, complete specification, contributor onboarding, and a link back to the repository.

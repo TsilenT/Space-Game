@@ -22,10 +22,14 @@ This document records durable choices separately from questions that still need 
 
 This choice keeps a four-person prototype readable while creating reusable foundations for doors, cover, smoke, sensors, hazards, and additional maps.
 
-### Next slice favors the whole loop — July 12, 2026
+### Whole-loop demo — July 12, 2026
 
-- After this visibility foundation, prioritize a thin, representative slice of the whole game over additional tactical depth.
-- The demo should connect one strategic encounter, the boarding mission, persistent consequences and a small ship-side recovery choice, then return the player to a next-step decision.
+- The demo connects one strategic encounter, the boarding mission, persistent consequences and one ship-side recovery choice, then returns the player to the next encounter.
+- It begins with 4 fuel, 1 salvage, and 75/100 hull. Boarding victory awards 4 salvage and causes 8 hull strain; every jump consumes 1 fuel.
+- Recovery is one choice: spend 2 salvage to heal each living wounded crew member by 2 HP, spend 2 salvage to restore 15 hull, or bank the salvage.
+- The encounter also exposes the specification's four strategic actions: board, scavenge, repair, and jump away. Scavenging trades 3 hull and 1 fuel for 1 salvage.
+- Crew wounds and death persist. Tactical defeat, zero hull, or zero fuel ends the demo campaign; a new run is explicit.
+- The same hand-authored contact repeats so persistence can be playtested without implying procedural content or a finished galaxy layer.
 - Defer cover, overwatch, inventory breadth, research trees, procedural generation, and broad campaign simulation until that compact loop is playable and useful for creative direction.
 
 ## Open creative questions
@@ -33,7 +37,7 @@ This choice keeps a four-person prototype readable while creating reusable found
 1. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?
 2. Should the player ship interior be fully simulated during normal travel?
 3. Should crew roles remain equipment-based or become more class-like?
-4. How lethal should the campaign be?
+4. How lethal should the later full campaign be beyond the demo's current tuning?
 5. Should the tone lean serious, comedic, or deliberately mixed?
 6. Should later missions be hand-authored, procedurally generated, or hybrid?
 7. After the end-to-end demo loop is working, which tactical system should follow visibility: cover, overwatch, doors, or environmental hazards?

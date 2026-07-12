@@ -1,6 +1,6 @@
 # Space Game
 
-A browser tactical prototype for a game combining starship-survival pressure with persistent, lethal squad tactics.
+A browser whole-loop prototype for a game combining starship-survival pressure with persistent, lethal squad tactics.
 
 > **FTL decides where disaster happens. X-COM decides who survives it.**
 
@@ -13,12 +13,12 @@ npm install
 npm run dev
 ```
 
-Select one of four crew and click cyan-highlighted tiles to scout the darkened ship (1 AP per tile). Visible hostiles within four tiles can be fired on for 2 AP and 3 damage, but walls block the shot. End Turn runs the deterministic enemy phase. Locate and eliminate all three hostiles before the boarding team is lost.
+Choose whether to board, scavenge, repair, or jump away from a hostile contact. Boarding launches the tactical mission: select crew, scout cyan-highlighted tiles, and fire on visible hostiles while walls block line of sight. Crew health and death, hull damage, salvage, fuel, and the recovery outcome persist into the next jump.
 
 ## Technology
 
 - TypeScript and Phaser 4 presentation
-- Pure deterministic tactical simulation (no Phaser dependency)
+- Pure deterministic game simulation (no Phaser dependency)
 - Vite build and Vitest tests
 - GitHub Pages deployment with the custom domain retained in `public/CNAME`
 
@@ -74,9 +74,7 @@ npm run build
 
 ## Current slice
 
-One data-driven enemy ship, four named crew, three enemies, AP movement, shared-squad fog of war, wall-blocked ranged attacks, damage/death, deterministic AI, victory/defeat, and restart. Campaign persistence, equipment, reaction fire, and strategy systems remain later milestones.
-
-The immediate next target is a deliberately thin whole-game demo: choose an encounter, run the boarding mission, carry one consequence and salvage reward into one recovery choice, then make the next jump decision.
+The current demo is one deliberately thin whole-game loop: choose an encounter action, run the boarding mission, bring persistent wounds or deaths home, collect salvage and hull damage, make one recovery choice, then spend fuel reaching the next encounter. Equipment, reaction fire, research, procedural encounters, and broader strategy systems remain later milestones.
 
 ## License
 

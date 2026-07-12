@@ -33,4 +33,18 @@ describe('TurnController', () => {
     expect(controller.current.mission.id).toBe('custom-mission')
     expect(controller.current.objective).toBe('Hold the bridge')
   })
+
+  it('invalidates a stale enemy callback after cancellation', () => {
+    let callback = () => {}
+    const render = vi.fn()
+    const controller = new TurnController(createGame(), render, next => (callback = next, 7), vi.fn())
+    controller.end()
+    controller.cancelPending()
+    controller.replace(createGame())
+    render.mockClear()
+    callback()
+    expect(controller.current.turn).toBe(1)
+    expect(controller.current.phase).toBe('player')
+    expect(render).not.toHaveBeenCalled()
+  })
 })

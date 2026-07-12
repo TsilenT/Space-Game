@@ -1,0 +1,331 @@
+#campaign-screen[hidden],
+#phaser-game[hidden],
+.actions[hidden],
+[hidden] {
+  display: none !important;
+}
+
+#campaign-screen {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 100% 0, rgb(99 227 214 / 8%), transparent 24rem),
+    #07101c;
+}
+
+.campaign-panel {
+  min-width: 0;
+  min-height: 600px;
+  padding: clamp(24px, 5vw, 48px);
+  display: grid;
+  align-content: start;
+  gap: 28px;
+}
+
+.campaign-strip {
+  min-width: 0;
+  padding-bottom: 18px;
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font: 700 .68rem/1.5 'Space Mono', monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.campaign-strip strong,
+.campaign-strip b {
+  color: var(--cyan);
+}
+
+.campaign-panel > h2 {
+  margin: -.15em 0 0;
+  font-size: clamp(1.8rem, 4vw, 3.5rem);
+  line-height: 1.05;
+  letter-spacing: -.035em;
+}
+
+#campaign-heading:focus {
+  outline: none;
+}
+
+.campaign-stats {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.campaign-stats > * {
+  min-width: 0;
+  margin: 0;
+  padding: 13px 14px;
+  background: #09141e;
+  overflow-wrap: anywhere;
+}
+
+.campaign-stats dt,
+.campaign-stats small {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font: 700 .62rem/1.4 'Space Mono', monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.campaign-stats dd,
+.campaign-stats strong {
+  margin: 0;
+  color: var(--ink);
+  font: 700 .9rem/1.4 'Space Mono', monospace;
+}
+
+.campaign-lede {
+  max-width: 680px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.campaign-choice-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.campaign-choice {
+  min-width: 0;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--cyan);
+  background: #091722;
+  overflow-wrap: anywhere;
+}
+
+.campaign-choice h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.campaign-choice p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.campaign-choice button {
+  width: 100%;
+  min-height: 44px;
+  margin-top: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--cyan);
+  background: var(--cyan);
+  color: #041012;
+  overflow-wrap: anywhere;
+}
+
+.campaign-choice button:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.campaign-choice button:disabled {
+  cursor: not-allowed;
+  border-color: var(--line);
+  background: #10212d;
+  color: var(--muted);
+  opacity: .7;
+}
+
+.campaign-roster {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.campaign-crew {
+  min-width: 0;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  background: #09141e;
+  color: var(--ink);
+}
+
+.campaign-crew > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.campaign-crew b,
+.campaign-crew strong {
+  color: var(--cyan);
+  font: 700 .7rem/1.4 'Space Mono', monospace;
+}
+
+.campaign-crew small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: .72rem;
+}
+
+.campaign-crew.wounded b,
+.campaign-crew.wounded strong,
+.campaign-crew .wounded {
+  color: var(--gold);
+}
+
+.campaign-crew.killed {
+  color: var(--muted);
+  opacity: .72;
+}
+
+.campaign-crew.killed b,
+.campaign-crew.killed strong,
+.campaign-crew .killed {
+  color: var(--red);
+}
+
+.campaign-report {
+  min-width: 0;
+  margin: 0;
+  padding: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 22px;
+  border: 1px solid var(--line);
+  background: #09141e;
+  color: var(--muted);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.campaign-report > * {
+  min-width: 0;
+  margin: 0;
+}
+
+.campaign-report strong,
+.campaign-report b {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+}
+
+.campaign-actions {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.campaign-actions button {
+  min-width: min(100%, 210px);
+  min-height: 44px;
+  padding: 12px 18px;
+  border: 1px solid var(--cyan);
+  background: var(--cyan);
+  color: #041012;
+}
+
+.campaign-actions button + button {
+  border-color: var(--line);
+  background: #10212d;
+  color: var(--ink);
+}
+
+.campaign-actions button:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.campaign-loss {
+  padding: clamp(18px, 4vw, 30px);
+  border: 1px solid rgb(255 102 112 / 55%);
+  border-top: 3px solid var(--red);
+  background: linear-gradient(145deg, rgb(255 102 112 / 11%), #091018 70%);
+}
+
+.campaign-loss .kicker,
+.campaign-loss h1,
+.campaign-loss h2,
+.campaign-loss strong {
+  color: var(--red);
+}
+
+@media (max-width: 900px) {
+  .play {
+    display: block;
+    padding-inline: max(10px, 3vw);
+  }
+
+  .mission {
+    padding: 0 12px 22px;
+  }
+
+  #hud {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 18px;
+  }
+}
+
+@media (max-width: 700px) {
+  #hud {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #campaign-screen {
+    overflow-x: clip;
+  }
+
+  .campaign-panel {
+    min-height: 0;
+    padding: 24px 18px;
+    gap: 22px;
+  }
+
+  .campaign-strip {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .campaign-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .campaign-choice-grid,
+  .campaign-report {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .campaign-crew {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .campaign-actions {
+    flex-direction: column;
+  }
+
+  .campaign-actions button {
+    width: 100%;
+    min-width: 0;
+  }
+}

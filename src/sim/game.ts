@@ -50,7 +50,7 @@ const alive = (unit: Unit): boolean => unit.hp > 0
 const distance = (a: Point, b: Point): number => Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
 
 function createUnit(placement: UnitPlacement): Unit {
-  return { ...placement, maxHp: placement.hp }
+  return { ...placement, maxHp: placement.maxHp ?? placement.hp }
 }
 
 export function createGame(mission: TacticalMission = BOARDING_MISSION): GameState {
