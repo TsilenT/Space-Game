@@ -35,7 +35,7 @@ export class TurnController {
   restart(): void {
     if (this.pending !== undefined) this.cancel(this.pending)
     this.pending = undefined
-    this.state = createGame()
+    this.state = createGame(this.state.mission)
     this.render(this.state)
   }
 }

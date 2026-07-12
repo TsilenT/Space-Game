@@ -1,6 +1,6 @@
 # Space Game
 
-A playable browser tactical prototype combining starship-survival pressure with persistent, lethal squad tactics.
+A browser tactical prototype for a game combining starship-survival pressure with persistent, lethal squad tactics.
 
 > **FTL decides where disaster happens. X-COM decides who survives it.**
 
@@ -13,7 +13,7 @@ npm install
 npm run dev
 ```
 
-Select one of four crew, click cyan-highlighted tiles to move (1 AP per tile), or click a hostile within four tiles to fire (2 AP, 3 damage). End Turn runs the deterministic enemy phase. Eliminate all three hostiles before the boarding team is lost.
+Select one of four crew and click cyan-highlighted tiles to scout the darkened ship (1 AP per tile). Visible hostiles within four tiles can be fired on for 2 AP and 3 damage, but walls block the shot. End Turn runs the deterministic enemy phase. Locate and eliminate all three hostiles before the boarding team is lost.
 
 ## Technology
 
@@ -68,12 +68,15 @@ npm run build
 ## Documents
 
 - [Complete specification](SPEC.md)
+- [Recorded design decisions](docs/decisions.md)
 - [Agent/contributor guide](AGENTS.md)
 - The playable site's **Design** section preserves the public high-level pitch.
 
 ## Current slice
 
-One hand-authored enemy ship, four named crew, three enemies, AP movement, ranged attacks, damage/death, deterministic AI, victory/defeat, and restart. Campaign persistence, fog of war, equipment, reaction fire, and strategy systems remain later milestones.
+One data-driven enemy ship, four named crew, three enemies, AP movement, shared-squad fog of war, wall-blocked ranged attacks, damage/death, deterministic AI, victory/defeat, and restart. Campaign persistence, equipment, reaction fire, and strategy systems remain later milestones.
+
+The immediate next target is a deliberately thin whole-game demo: choose an encounter, run the boarding mission, carry one consequence and salvage reward into one recovery choice, then make the next jump decision.
 
 ## License
 
