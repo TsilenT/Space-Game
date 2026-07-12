@@ -36,6 +36,7 @@ export interface UnitPlacement extends Point {
   readonly role: string
   readonly team: Team
   readonly hp: number
+  readonly maxHp?: number
   readonly ap: number
 }
 

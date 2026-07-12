@@ -5,6 +5,7 @@ export type Canceller = (handle: number) => void
 
 export class TurnController {
   private pending?: number
+  private generation = 0
 
   constructor(
     private state: GameState,
@@ -25,7 +26,9 @@ export class TurnController {
     if (next === this.state || this.pending !== undefined) return
     this.state = next
     this.render(this.state)
+    const generation = ++this.generation
     this.pending = this.schedule(() => {
+      if (generation !== this.generation) return
       this.pending = undefined
       this.state = enemyTurn(this.state)
       this.render(this.state)
@@ -33,9 +36,14 @@ export class TurnController {
   }
 
   restart(): void {
-    if (this.pending !== undefined) this.cancel(this.pending)
-    this.pending = undefined
+    this.cancelPending()
     this.state = createGame(this.state.mission)
     this.render(this.state)
+  }
+
+  cancelPending(): void {
+    this.generation += 1
+    if (this.pending !== undefined) this.cancel(this.pending)
+    this.pending = undefined
   }
 }
