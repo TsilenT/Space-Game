@@ -1,240 +1,380 @@
 import { describe, expect, it } from 'vitest'
 import {
-  beginBoarding,
-  boardingMissionFor,
+  CAMPAIGN_TUNING,
+  beginMission,
+  buyFuel,
+  buyWeapon,
+  chooseDestination,
   chooseRecovery,
+  continueEncounter,
   createCampaign,
-  jumpAway,
-  repairShip,
-  resolveBoarding,
-  scavengeEncounter,
+  declineEncounter,
+  hireMercenary,
+  leaveStarbase,
+  missionFor,
+  resolveEncounter,
+  resolveMission,
+  sellSalvage,
+  type CampaignEncounter,
   type CampaignState,
+  type DestinationKind,
+  type DistressEncounter,
+  type MoonOutcome,
+  type StarbaseEncounter,
 } from './campaign'
-import { createGame, type GameState, type Status } from './game'
-import { BOARDING_MISSION } from './map'
+import { createGame, type GameState, type MissionResolution } from './game'
+import { BOARDING_MISSION, CIVILIAN_RESCUE_MISSION, DISTRESS_TRAP_MISSION, PIRATE_RESCUE_MISSION } from './map'
+
+function arrive(seed: number, kind: DestinationKind, changes: Partial<CampaignState> = {}): CampaignState {
+  const route = { ...createCampaign(seed), ...changes }
+  const offer = route.offers.find(candidate => candidate.kind === kind)!
+  return chooseDestination(route, offer.id)
+}
 
 function completedMission(
   state: CampaignState,
-  status: Exclude<Status, 'playing'>,
+  result: 'victory' | 'defeat',
   health: Readonly<Record<string, number>> = {},
+  reason?: MissionResolution['reason'],
 ): GameState {
-  const game = createGame(boardingMissionFor(state))
+  const game = createGame(missionFor(state))
+  const resolution: MissionResolution = result === 'victory'
+    ? {
+        result,
+        reason: game.objective.kind === 'rescue' ? 'survivor-rescued' : 'hostiles-eliminated',
+      }
+    : { result, reason: reason === 'deadline-expired' ? reason : 'crew-lost' }
   return {
     ...game,
-    status,
+    status: result,
+    resolution,
     units: game.units.map(unit => health[unit.id] === undefined ? unit : { ...unit, hp: health[unit.id] }),
   }
 }
 
-function victoriousCampaign(
-  health: Readonly<Record<string, number>> = {},
-  changes: Partial<CampaignState> = {},
-): CampaignState {
-  const mission = beginBoarding({ ...createCampaign(), ...changes })
-  return resolveBoarding(mission, completedMission(mission, 'victory', health))
+function encounter<T extends CampaignEncounter>(state: CampaignState, kind: T['kind']): T {
+  expect(state.encounter?.kind).toBe(kind)
+  return state.encounter as T
 }
 
-describe('campaign setup and boarding missions', () => {
-  it('starts the demo at jump one with the boarding crew and pressured resources', () => {
-    const campaign = createCampaign()
+describe('seeded route generation', () => {
+  it('is deterministic and always offers exactly one of each destination', () => {
+    const first = createCampaign(42)
+    const repeated = createCampaign(42)
+    const different = createCampaign(43)
 
-    expect(campaign).toMatchObject({
-      phase: 'encounter',
+    expect(first).toEqual(repeated)
+    expect(first.offers).not.toEqual(different.offers)
+    expect(first).toMatchObject({
+      phase: 'route',
       jump: 1,
       fuel: 4,
+      maxFuel: 6,
+      credits: 10,
       salvage: 1,
       hull: 75,
-      maxHull: 100,
+      weaponDamage: 3,
     })
-    expect(campaign.crew.map(crew => [crew.id, crew.hp, crew.maxHp])).toEqual([
-      ['ada', 8, 8],
-      ['milo', 8, 8],
-      ['imani', 8, 8],
-      ['soren', 8, 8],
-    ])
+    expect(first.offers.map(offer => offer.kind).sort()).toEqual(['abandoned-moon', 'distress', 'starbase'])
+    expect(new Set(first.offers.map(offer => offer.id))).toHaveLength(3)
   })
 
-  it('begins boarding only from an encounter', () => {
-    const encounter = createCampaign()
-    const mission = beginBoarding(encounter)
-
-    expect(mission.phase).toBe('mission')
-    expect(beginBoarding(mission)).toBe(mission)
-    const debrief = victoriousCampaign()
-    expect(beginBoarding(debrief)).toBe(debrief)
+  it('uses the showcase seed for a stocked market, moon salvage, and timed rescue', () => {
+    expect(encounter<StarbaseEncounter>(arrive(37, 'starbase'), 'starbase')).toMatchObject({
+      fuelStock: 2,
+      weaponAvailable: true,
+    })
+    expect(encounter<StarbaseEncounter>(arrive(37, 'starbase'), 'starbase').mercenary).toBeDefined()
+    expect(encounter(arrive(37, 'abandoned-moon'), 'abandoned-moon')).toMatchObject({ outcome: 'salvage' })
+    expect(encounter(arrive(37, 'distress'), 'distress')).toMatchObject({ outcome: 'rescue' })
   })
 
-  it('builds a fresh mission with persistent living crew and reset enemies', () => {
-    const campaign: CampaignState = {
-      ...createCampaign(),
-      crew: createCampaign().crew.map(crew => crew.id === 'ada'
-        ? { ...crew, hp: 3 }
-        : crew.id === 'milo'
-          ? { ...crew, hp: 0 }
-          : crew),
+  it('spends fuel exactly once and persists the rolled encounter', () => {
+    const route = createCampaign(37)
+    const offer = route.offers.find(candidate => candidate.kind === 'distress')!
+    const arrived = chooseDestination(route, offer.id)
+
+    expect(arrived).toMatchObject({ phase: 'encounter', fuel: 3, offers: [] })
+    expect(arrived.encounter).toEqual(encounter(arrive(37, 'distress'), 'distress'))
+    expect(chooseDestination(arrived, offer.id)).toBe(arrived)
+    expect(chooseDestination(route, 'missing-offer')).toBe(route)
+  })
+})
+
+describe('abandoned moon and direct distress outcomes', () => {
+  const moonSeeds: Readonly<Record<MoonOutcome, number>> = {
+    salvage: 9,
+    survivor: 1,
+    amoeba: 5,
+    fuel: 8,
+  }
+
+  it('reaches every weighted moon outcome from stable seeds', () => {
+    for (const [outcome, seed] of Object.entries(moonSeeds)) {
+      expect(encounter(arrive(seed, 'abandoned-moon'), 'abandoned-moon')).toMatchObject({ outcome })
     }
-    const mission = boardingMissionFor(campaign)
+  })
 
-    expect(mission).not.toBe(BOARDING_MISSION)
-    expect(mission.units.filter(unit => unit.team === 'crew').map(unit => [unit.id, unit.hp, unit.maxHp])).toEqual([
-      ['ada', 3, 8],
-      ['imani', 8, 8],
-      ['soren', 8, 8],
-    ])
-    expect(mission.units.filter(unit => unit.team === 'enemy')).toEqual(
-      BOARDING_MISSION.units.filter(unit => unit.team === 'enemy'),
-    )
+  it('applies a direct outcome once, then continues to a fresh route without another fuel charge', () => {
+    const arrived = arrive(moonSeeds.salvage, 'abandoned-moon')
+    const resolved = resolveEncounter(arrived)
+
+    expect(resolved).toMatchObject({ phase: 'encounter', fuel: 3, salvage: 4 })
+    expect(resolved.encounter).toMatchObject({ resolved: true })
+    expect(resolveEncounter(resolved)).toBe(resolved)
+
+    const next = continueEncounter(resolved)
+    expect(next).toMatchObject({ phase: 'route', jump: 2, fuel: 3, salvage: 4 })
+    expect(next.offers).toHaveLength(3)
+    expect(continueEncounter(next)).toBe(next)
+  })
+
+  it('recruits deterministic survivors without exceeding six living crew', () => {
+    const first = resolveEncounter(arrive(moonSeeds.survivor, 'abandoned-moon'))
+    const repeated = resolveEncounter(arrive(moonSeeds.survivor, 'abandoned-moon'))
+    expect(first.crew).toHaveLength(5)
+    expect(first.crew[4]).toEqual(repeated.crew[4])
+    expect(first.crew[4].id).toContain('survivor-jump-1-abandoned-moon')
+
+    const base = arrive(moonSeeds.survivor, 'abandoned-moon')
+    const full = {
+      ...base,
+      crew: [
+        ...base.crew,
+        { id: 'reserve-a', name: 'Reserve A', role: 'Pilot', hp: 8, maxHp: 8 },
+        { id: 'reserve-b', name: 'Reserve B', role: 'Pilot', hp: 8, maxHp: 8 },
+      ],
+    }
+    expect(resolveEncounter(full).crew).toHaveLength(CAMPAIGN_TUNING.rosterCap)
+
+    const memorialAndFiveLiving = {
+      ...base,
+      crew: full.crew.map(crew => crew.id === 'ada' ? { ...crew, hp: 0 } : crew),
+    }
+    const replacement = resolveEncounter(memorialAndFiveLiving)
+    expect(replacement.crew).toHaveLength(CAMPAIGN_TUNING.rosterCap + 1)
+    expect(replacement.crew.filter(crew => crew.hp > 0)).toHaveLength(CAMPAIGN_TUNING.rosterCap)
+    expect(replacement.crew.at(-1)?.id).toContain('survivor-jump-1-abandoned-moon')
+  })
+
+  it('lets a rare fuel cache save a final-fuel arrival', () => {
+    const arrived = arrive(moonSeeds.fuel, 'abandoned-moon', { fuel: 1 })
+    expect(arrived.fuel).toBe(0)
+    const resolved = resolveEncounter(arrived)
+    expect(resolved.fuel).toBe(2)
+    expect(continueEncounter(resolved)).toMatchObject({ phase: 'route', fuel: 2, jump: 2 })
+  })
+
+  it('strands a final-fuel crew after an outcome that does not restore fuel', () => {
+    const arrived = arrive(moonSeeds.salvage, 'abandoned-moon', { fuel: 1 })
+    const resolved = resolveEncounter(arrived)
+    expect(resolved).toMatchObject({ phase: 'encounter', fuel: 0, salvage: 4 })
+    expect(continueEncounter(resolved)).toMatchObject({ phase: 'lost', fuel: 0, jump: 2 })
+  })
+
+  it('applies amoeba damage before checking hull loss', () => {
+    const arrived = arrive(moonSeeds.amoeba, 'abandoned-moon', { hull: CAMPAIGN_TUNING.amoebaHullDamage })
+    const lost = resolveEncounter(arrived)
+    expect(lost).toMatchObject({ phase: 'lost', hull: 0 })
+    expect(lost.encounter).toMatchObject({ outcome: 'amoeba', resolved: true })
+  })
+
+  it('can take or decline a survivor found at a direct distress call', () => {
+    const arrived = arrive(8, 'distress')
+    const rescued = resolveEncounter(arrived)
+    expect(encounter<DistressEncounter>(arrived, 'distress').outcome).toBe('survivor')
+    expect(rescued.crew).toHaveLength(5)
+
+    const declined = declineEncounter(arrived)
+    expect(declined).toMatchObject({ phase: 'route', jump: 2, fuel: 3 })
+    expect(declined.crew).toHaveLength(4)
+    expect(declineEncounter(rescued)).toBe(rescued)
   })
 })
 
-describe('boarding resolution', () => {
-  it('persists injuries and death, awards salvage, damages the hull, and creates a UI report', () => {
-    const result = victoriousCampaign({ ada: 5, milo: 0 })
+describe('starbase market and final-fuel arrival', () => {
+  it('buys stocked fuel within stock, credit, and tank limits', () => {
+    const arrived = arrive(1, 'starbase')
+    const station = encounter<StarbaseEncounter>(arrived, 'starbase')
+    expect(station.fuelStock).toBeGreaterThan(0)
 
-    expect(result).toMatchObject({ phase: 'debrief', salvage: 5, hull: 67, fuel: 4 })
-    expect(result.crew.find(crew => crew.id === 'ada')?.hp).toBe(5)
-    expect(result.crew.find(crew => crew.id === 'milo')?.hp).toBe(0)
-    expect(result.missionReport).toMatchObject({
-      outcome: 'victory',
-      jump: 1,
-      objective: BOARDING_MISSION.objective,
-      salvageGained: 4,
-      hullDamage: 8,
+    const bought = buyFuel(arrived, 99)
+    const quantity = Math.min(station.fuelStock, arrived.maxFuel - arrived.fuel, Math.floor(arrived.credits / station.fuelPrice))
+    expect(bought.fuel).toBe(arrived.fuel + quantity)
+    expect(bought.credits).toBe(arrived.credits - quantity * station.fuelPrice)
+    expect((bought.encounter as StarbaseEncounter).fuelStock).toBe(station.fuelStock - quantity)
+    expect(buyFuel(bought, 0)).toBe(bought)
+    expect(buyFuel(bought, -1)).toBe(bought)
+  })
+
+  it('lets a stocked starbase save the ship after spending its final fuel', () => {
+    const arrived = arrive(1, 'starbase', { fuel: 1 })
+    expect(arrived.fuel).toBe(0)
+    const refueled = buyFuel(arrived)
+    expect(refueled).toMatchObject({ phase: 'encounter', fuel: 1, credits: 8 })
+    expect(leaveStarbase(refueled)).toMatchObject({ phase: 'route', jump: 2, fuel: 1 })
+  })
+
+  it('cannot refuel at the rare dry station and is stranded if it leaves at zero fuel', () => {
+    const arrived = arrive(6, 'starbase', { fuel: 1 })
+    expect(encounter<StarbaseEncounter>(arrived, 'starbase').fuelStock).toBe(0)
+    expect(buyFuel(arrived)).toBe(arrived)
+    expect(leaveStarbase(arrived)).toMatchObject({ phase: 'lost', fuel: 0 })
+  })
+
+  it('sells salvage, buys one mediocre weapon, and carries its damage into missions', () => {
+    let state = arrive(1, 'starbase')
+    expect(encounter<StarbaseEncounter>(state, 'starbase').weaponAvailable).toBe(true)
+    state = sellSalvage(state)
+    expect(state).toMatchObject({ salvage: 0, credits: 12 })
+    expect(sellSalvage(state)).toBe(state)
+
+    state = buyWeapon(state)
+    expect(state).toMatchObject({ credits: 6, weaponDamage: 4 })
+    expect(buyWeapon(state)).toBe(state)
+
+    const tacticalState = beginMission({ ...arrive(1, 'distress'), weaponDamage: state.weaponDamage })
+    expect(missionFor(tacticalState).crewDamage).toBe(4)
+  })
+
+  it('hires the seeded mercenary once and respects credits and roster capacity', () => {
+    const arrived = arrive(1, 'starbase')
+    const station = encounter<StarbaseEncounter>(arrived, 'starbase')
+    expect(station.mercenary).toBeDefined()
+    const hired = hireMercenary(arrived)
+    expect(hired).toMatchObject({ credits: 2 })
+    expect(hired.crew).toHaveLength(5)
+    expect(hired.crew[4]).toMatchObject({ id: station.mercenary!.id, role: station.mercenary!.role })
+    expect(hireMercenary(hired)).toBe(hired)
+
+    const poor = { ...arrived, credits: 0 }
+    expect(hireMercenary(poor)).toBe(poor)
+    const full = {
+      ...arrived,
+      crew: [
+        ...arrived.crew,
+        { id: 'reserve-a', name: 'Reserve A', role: 'Pilot', hp: 8, maxHp: 8 },
+        { id: 'reserve-b', name: 'Reserve B', role: 'Pilot', hp: 8, maxHp: 8 },
+      ],
+    }
+    expect(hireMercenary(full)).toBe(full)
+
+    const openLivingSlot = {
+      ...full,
+      crew: full.crew.map(crew => crew.id === 'ada' ? { ...crew, hp: 0 } : crew),
+    }
+    const replacement = hireMercenary(openLivingSlot)
+    expect(replacement.crew).toHaveLength(CAMPAIGN_TUNING.rosterCap + 1)
+    expect(replacement.crew.filter(crew => crew.hp > 0)).toHaveLength(CAMPAIGN_TUNING.rosterCap)
+  })
+})
+
+describe('contextual tactical missions', () => {
+  const missionSeeds = {
+    pirates: 1,
+    rescue: 3,
+    trap: 6,
+  } as const
+
+  it('maps all three tactical distress outcomes to their authored templates', () => {
+    const expected = {
+      pirates: PIRATE_RESCUE_MISSION.id,
+      rescue: CIVILIAN_RESCUE_MISSION.id,
+      trap: DISTRESS_TRAP_MISSION.id,
+    } as const
+    for (const [outcome, seed] of Object.entries(missionSeeds)) {
+      const arrived = arrive(seed, 'distress')
+      expect(encounter<DistressEncounter>(arrived, 'distress').outcome).toBe(outcome)
+      const mission = beginMission(arrived)
+      expect(mission).toMatchObject({ phase: 'mission', activeMission: { templateId: expected[outcome as keyof typeof expected] } })
+      expect(missionFor(mission).id).toBe(expected[outcome as keyof typeof expected])
+    }
+  })
+
+  it('deploys every living roster member up to the six-person cap on valid authored spawns', () => {
+    const arrived = arrive(missionSeeds.pirates, 'distress')
+    const expanded = {
+      ...arrived,
+      crew: [
+        ...arrived.crew.map(crew => crew.id === 'ada' ? { ...crew, hp: 0 } : crew),
+        { id: 'reserve-a', name: 'Reserve A', role: 'Pilot', hp: 7, maxHp: 8 },
+        { id: 'reserve-b', name: 'Reserve B', role: 'Mercenary', hp: 8, maxHp: 8 },
+      ],
+    }
+    const mission = missionFor(beginMission(expanded))
+    const deployed = mission.units.filter(unit => unit.team === 'crew')
+    expect(deployed.map(unit => unit.id)).toEqual(['milo', 'imani', 'soren', 'reserve-a', 'reserve-b'])
+    expect(deployed.find(unit => unit.id === 'reserve-a')).toMatchObject({ hp: 7, maxHp: 8 })
+    expect(new Set(deployed.map(unit => `${unit.x},${unit.y}`)).size).toBe(deployed.length)
+  })
+
+  it('persists casualties, pays contextual pirate rewards, recruits the survivor, and resolves once', () => {
+    const mission = beginMission(arrive(missionSeeds.pirates, 'distress'))
+    const completed = completedMission(mission, 'victory', { ada: 5, milo: 0 })
+    const debrief = resolveMission(mission, completed)
+
+    expect(debrief).toMatchObject({
+      phase: 'debrief',
+      fuel: 3,
+      salvage: 3,
+      credits: 14,
+      hull: 71,
     })
-    expect(result.missionReport?.crew).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'ada', hpBefore: 8, hpAfter: 5, status: 'wounded' }),
-      expect.objectContaining({ id: 'milo', hpBefore: 8, hpAfter: 0, status: 'killed' }),
-      expect.objectContaining({ id: 'imani', hpBefore: 8, hpAfter: 8, status: 'ready' }),
-    ]))
+    expect(debrief.crew).toHaveLength(5)
+    expect(debrief.crew.find(crew => crew.id === 'ada')?.hp).toBe(5)
+    expect(debrief.crew.find(crew => crew.id === 'milo')?.hp).toBe(0)
+    expect(debrief.missionReport).toMatchObject({
+      outcome: 'victory',
+      objective: PIRATE_RESCUE_MISSION.objective.label,
+      salvageGained: 2,
+      creditsGained: 4,
+      fuelGained: 0,
+      hullDamage: 4,
+    })
+    expect(resolveMission(debrief, completed)).toBe(debrief)
   })
 
-  it('cannot resolve an active mission or claim the victory reward twice', () => {
-    const mission = beginBoarding(createCampaign())
-    const playing = createGame(boardingMissionFor(mission))
-    expect(resolveBoarding(mission, playing)).toBe(mission)
-
-    const completed = completedMission(mission, 'victory')
-    const debrief = resolveBoarding(mission, completed)
-    expect(resolveBoarding(debrief, completed)).toBe(debrief)
-    expect(debrief.salvage).toBe(5)
-  })
-
-  it('loses immediately on mission defeat while retaining the casualty report', () => {
-    const mission = beginBoarding(createCampaign())
-    const result = resolveBoarding(mission, completedMission(mission, 'defeat', { ada: 0, milo: 2 }))
-
-    expect(result.phase).toBe('lost')
-    expect(result.salvage).toBe(1)
-    expect(result.hull).toBe(75)
-    expect(result.crew.find(crew => crew.id === 'ada')?.hp).toBe(0)
-    expect(result.crew.find(crew => crew.id === 'milo')?.hp).toBe(2)
-    expect(result.missionReport).toMatchObject({ outcome: 'defeat', salvageGained: 0, hullDamage: 0 })
-  })
-
-  it('loses if boarding damage destroys the hull even after tactical victory', () => {
-    const result = victoriousCampaign({}, { hull: 8 })
-
-    expect(result).toMatchObject({ phase: 'lost', hull: 0, salvage: 5 })
-    expect(result.missionReport?.outcome).toBe('victory')
-  })
-})
-
-describe('debrief recovery', () => {
-  it('spends salvage to heal living crew, never revives the dead, then advances', () => {
-    const debrief = victoriousCampaign({ ada: 5, milo: 0 })
+  it('returns recovery to a new route without charging fuel and preserves wounds and death', () => {
+    const mission = beginMission(arrive(missionSeeds.pirates, 'distress'))
+    const debrief = resolveMission(mission, completedMission(mission, 'victory', { ada: 5, milo: 0 }))
     const next = chooseRecovery(debrief, 'crew')
 
-    expect(next).toMatchObject({ phase: 'encounter', jump: 2, fuel: 3, salvage: 3 })
+    expect(next).toMatchObject({ phase: 'route', jump: 2, fuel: 3, salvage: 1 })
     expect(next.crew.find(crew => crew.id === 'ada')?.hp).toBe(7)
     expect(next.crew.find(crew => crew.id === 'milo')?.hp).toBe(0)
-    expect(next.crew.find(crew => crew.id === 'imani')?.hp).toBe(8)
     expect(next.missionReport).toBeUndefined()
   })
 
-  it('spends salvage to repair hull without exceeding maximum, then advances', () => {
-    const debrief = victoriousCampaign()
-    const next = chooseRecovery(debrief, 'hull')
-    expect(next).toMatchObject({ phase: 'encounter', jump: 2, fuel: 3, salvage: 3, hull: 82 })
+  it('applies timed-rescue detonation damage and persists the tactical crew loss', () => {
+    const mission = beginMission(arrive(missionSeeds.rescue, 'distress'))
+    const game = completedMission(
+      mission,
+      'defeat',
+      Object.fromEntries(missionFor(mission).units.filter(unit => unit.team === 'crew').map(unit => [unit.id, 0])),
+      'deadline-expired',
+    )
+    const lost = resolveMission(mission, game)
 
-    const nearlyFull = { ...debrief, hull: 95 }
-    expect(chooseRecovery(nearlyFull, 'hull').hull).toBe(100)
+    expect(lost).toMatchObject({ phase: 'lost', hull: 55 })
+    expect(lost.crew.every(crew => crew.hp === 0)).toBe(true)
+    expect(lost.missionReport).toMatchObject({
+      outcome: 'defeat',
+      reason: 'deadline-expired',
+      hullDamage: 20,
+      salvageGained: 0,
+      creditsGained: 0,
+    })
   })
 
-  it('can bank salvage and advance without changing ship or crew', () => {
-    const debrief = victoriousCampaign({ ada: 6 })
-    const next = chooseRecovery(debrief, 'bank')
-
-    expect(next).toMatchObject({ phase: 'encounter', jump: 2, fuel: 3, salvage: 5, hull: 67 })
-    expect(next.crew).toBe(debrief.crew)
-  })
-
-  it('rejects recovery outside debrief and paid recovery without enough salvage', () => {
-    const encounter = createCampaign()
-    expect(chooseRecovery(encounter, 'bank')).toBe(encounter)
-
-    const poorDebrief = { ...victoriousCampaign(), salvage: 1 }
-    expect(chooseRecovery(poorDebrief, 'crew')).toBe(poorDebrief)
-    expect(chooseRecovery(poorDebrief, 'hull')).toBe(poorDebrief)
-  })
-
-  it('rejects recovery that has nothing to repair', () => {
-    const debrief = victoriousCampaign()
-    const healthy = { ...debrief, crew: debrief.crew.map(crew => ({ ...crew, hp: crew.maxHp })) }
-    expect(chooseRecovery(healthy, 'crew')).toBe(healthy)
-    const intact = { ...debrief, hull: debrief.maxHull }
-    expect(chooseRecovery(intact, 'hull')).toBe(intact)
-  })
-})
-
-describe('encounter choices and campaign loss', () => {
-  it('jumps away by consuming fuel and advancing to the next encounter', () => {
-    const campaign = createCampaign()
-    const next = jumpAway(campaign)
-
-    expect(next).toMatchObject({ phase: 'encounter', jump: 2, fuel: 3, salvage: 1, hull: 75 })
-    const mission = { ...campaign, phase: 'mission' as const }
-    expect(jumpAway(mission)).toBe(mission)
-  })
-
-  it('scavenges for salvage at a hull and fuel cost, then advances', () => {
-    const next = scavengeEncounter(createCampaign())
-    expect(next).toMatchObject({ phase: 'encounter', jump: 2, fuel: 3, salvage: 2, hull: 72 })
-  })
-
-  it('repairs in place when affordable and damaged, with resource and phase guards', () => {
-    const campaign = { ...createCampaign(), salvage: 3 }
-    const repaired = repairShip(campaign)
-    expect(repaired).toMatchObject({ phase: 'encounter', jump: 1, fuel: 4, salvage: 1, hull: 90 })
-
-    const poor = createCampaign()
-    expect(repairShip(poor)).toBe(poor)
-    const full = { ...campaign, hull: 100 }
-    expect(repairShip(full)).toBe(full)
-    const mission = { ...campaign, phase: 'mission' as const }
-    expect(repairShip(mission)).toBe(mission)
-  })
-
-  it('loses when an encounter consumes the final fuel and rejects later transitions', () => {
-    const finalJump = { ...createCampaign(), fuel: 1 }
-    const lost = jumpAway(finalJump)
-
-    expect(lost).toMatchObject({ phase: 'lost', jump: 2, fuel: 0 })
-    expect(jumpAway(lost)).toBe(lost)
-    expect(scavengeEncounter(lost)).toBe(lost)
-    expect(beginBoarding(lost)).toBe(lost)
-  })
-
-  it('loses when scavenging destroys the hull while still applying the encounter outcome', () => {
-    const fragile = { ...createCampaign(), hull: 3 }
-    const lost = scavengeEncounter(fragile)
-
-    expect(lost).toMatchObject({ phase: 'lost', jump: 2, fuel: 3, salvage: 2, hull: 0 })
-  })
-
-  it('loses when a debrief choice consumes the final fuel', () => {
-    const debrief = { ...victoriousCampaign(), fuel: 1 }
-    const lost = chooseRecovery(debrief, 'bank')
-
-    expect(lost).toMatchObject({ phase: 'lost', jump: 2, fuel: 0 })
+  it('rejects active games, the wrong scenario, and mission transitions in the wrong phase', () => {
+    const arrived = arrive(missionSeeds.rescue, 'distress')
+    const mission = beginMission(arrived)
+    const active = createGame(missionFor(mission))
+    expect(resolveMission(mission, active)).toBe(mission)
+    expect(resolveMission(mission, createGame(BOARDING_MISSION))).toBe(mission)
+    expect(beginMission(mission)).toBe(mission)
+    const directSurvivor = arrive(8, 'distress')
+    expect(beginMission(directSurvivor)).toBe(directSurvivor)
+    expect(() => missionFor(createCampaign())).toThrow('no active tactical mission')
   })
 })

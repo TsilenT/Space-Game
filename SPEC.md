@@ -414,7 +414,7 @@ Music should support tension rather than constantly dominate the scene.
 
 Create one playable loop where the player chooses a hostile encounter, boards an enemy ship, completes a turn-based tactical mission, returns with salvage, and spends that salvage on one recovery choice.
 
-The current thin whole-loop demo validates that complete sequence with a command screen, a hand-authored boarding mission, persistent consequences, and a return to the next jump. It does not yet claim the complete MVP: the physical player-ship layout, engine room, reaction fire, and upgrade path below remain deliberately deferred.
+The current route-variety demo validates that sequence with seeded destination choices, strategic events, multiple authored tactical layouts, persistent consequences and recruits, starbase trade, recovery, and a return to navigation. It does not yet claim the complete MVP: the physical player-ship layout, engine room, reaction fire, and deeper upgrade path below remain deliberately deferred.
 
 ### Full MVP Must Include
 
@@ -481,7 +481,9 @@ After the MVP, a vertical slice should include:
 5. **First slice:** A hand-authored tactical boarding encounter before broader campaign or ship-management systems.
 6. **Collaboration:** Coding agents operate setup, dependencies, verification, Git, and GitHub while the human collaborator acts as creative director.
 7. **Tactical visibility:** Living crew share explored terrain and current vision, while every attack still requires clear line of sight from the individual shooter. Opaque map cells block sight and fire symmetrically for crew and enemies.
-8. **Whole-loop demo:** The first end-to-end demo connects a fixed strategic contact, the boarding mission, persistent crew and hull consequences, salvage, one recovery choice, and the next fuel-consuming jump. It deliberately repeats the same authored contact rather than pretending to be a broader campaign.
+8. **Whole-loop demo:** The first end-to-end demo connected a fixed strategic contact, the boarding mission, persistent crew and hull consequences, salvage, one recovery choice, and the next fuel-consuming jump. It initially repeated the same authored contact to validate persistence before adding breadth.
+9. **Frontier route variety:** Each jump offers a distress call, starbase, and abandoned moon. Outcomes use seeded deterministic rolls that resolve once, while tactical variety comes from a small catalog of authored layouts and objectives before any unconstrained map generator.
+10. **Timed rescue:** Distress missions can require reaching a survivor by the end of Turn 8. Missing the deadline destroys the target ship, kills the deployed team, and damages the player ship.
 
 This demo targets the MVP loop in section 14; it is not the broader three-sector post-MVP vertical slice described in section 15.
 
@@ -494,7 +496,7 @@ These decisions define the current prototype, not an irreversible promise about 
 3. Should crew roles remain equipment-based or become more class-like?
 4. How lethal should the campaign be?
 5. Should the tone lean serious, comedic, or deliberately mixed?
-6. Should later missions be hand-authored, procedurally generated, or hybrid?
+6. When should proven authored room modules graduate into constrained procedural layouts?
 7. Which tactical system should follow line of sight and fog of war: cover, overwatch, doors, or environmental hazards?
 
 ---
