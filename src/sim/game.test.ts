@@ -94,4 +94,32 @@ describe('closed doors', () => {
     expect(result.openDoors).toEqual(['2,0'])
     expect(result.units.find(unit => unit.id === 'wraith-1')).toMatchObject({ x: 2, y: 0 })
   })
+
+  it('does not let a unit path through a closed door even when shared crew vision reveals the far side', () => {
+    const mission: TacticalMission = {
+      id: 'door-test-two-sided',
+      objective: 'Test doors from both sides',
+      visionRange: 2,
+      map: defineTacticalMap({ rows: ['..D...'], legend: doorLegend }),
+      units: [
+        { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 4 },
+        { id: 'milo', name: 'Milo', role: 'Engineer', team: 'crew', x: 4, y: 0, hp: 8, ap: 4 },
+      ],
+    }
+    const game = createGame(mission)
+
+    // Milo's own view of the far side stitches the whole corridor into shared vision,
+    // even though the door between them is still closed.
+    expect(currentVisibility(game).map(key)).toEqual(['0,0', '1,0', '2,0', '3,0', '4,0', '5,0'])
+    expect(game.openDoors).toEqual([])
+
+    const moves = legalMoves(game).map(key)
+    expect(moves).toEqual(['1,0', '2,0'])
+    expect(moves).not.toContain('3,0')
+    expect(move(game, 3, 0)).toBe(game)
+
+    const opened = move(game, 2, 0)
+    expect(opened.openDoors).toEqual(['2,0'])
+    expect(legalMoves(opened).map(key)).toContain('3,0')
+  })
 })

@@ -102,6 +102,10 @@ function occupied(state: GameState, point: Point, ignore?: string): boolean {
   return state.units.some(unit => alive(unit) && unit.id !== ignore && unit.x === point.x && unit.y === point.y)
 }
 
+function isClosedDoor(state: GameState, point: Point): boolean {
+  return cellAt(state.map, point)?.door === true && !state.openDoors.includes(key(point))
+}
+
 function neighbors(map: TacticalMap, point: Point): Point[] {
   return [
     { x: point.x + 1, y: point.y },
@@ -135,8 +139,8 @@ export function legalMoves(state: GameState): Point[] {
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || !visible.has(neighborKey) || occupied(state, neighbor, unit.id)) continue
       seen.set(neighborKey, cost + 1)
-      queue.push(neighbor)
       moves.push(neighbor)
+      if (!isClosedDoor(state, neighbor)) queue.push(neighbor)
     }
   }
 
@@ -155,7 +159,7 @@ function shortestDistance(state: GameState, start: Point, end: Point, ignore?: s
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || !allowed.has(neighborKey) || occupied(state, neighbor, ignore)) continue
       seen.add(neighborKey)
-      queue.push([neighbor, cost + 1])
+      if (neighborKey === key(end) || !isClosedDoor(state, neighbor)) queue.push([neighbor, cost + 1])
     }
   }
 
