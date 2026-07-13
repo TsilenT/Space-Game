@@ -13,7 +13,7 @@ npm install
 npm run dev
 ```
 
-Choose whether to board, scavenge, repair, or jump away from a hostile contact. Boarding launches the tactical mission: select crew, scout cyan-highlighted tiles, and fire on visible hostiles while walls block line of sight. Crew health and death, hull damage, salvage, fuel, and the recovery outcome persist into the next jump.
+Choose among a distress call, starbase, and abandoned moon on every jump. Seeded encounters can reveal survivors, salvage, fuel, pirates, traps, or stranger hazards; tactical missions use multiple authored layouts and include both elimination and an eight-turn rescue. Crew health and death, recruits, a weapon upgrade, hull damage, credits, salvage, and fuel persist across the route.
 
 ## Technology
 
@@ -74,7 +74,7 @@ npm run build
 
 ## Current slice
 
-The current demo is one deliberately thin whole-game loop: choose an encounter action, run the boarding mission, bring persistent wounds or deaths home, collect salvage and hull damage, make one recovery choice, then spend fuel reaching the next encounter. Equipment, reaction fire, research, procedural encounters, and broader strategy systems remain later milestones.
+The current demo is a compact frontier route: spend fuel choosing among three signal types, resolve seeded strategic events or tactical missions, bring persistent wounds and recruits home, trade at a starbase, recover, and plot another jump. A small catalog of authored ship layouts provides controlled variety; procedural layout generation, deeper equipment, reaction fire, research, and broader sector simulation remain later milestones.
 
 ## License
 

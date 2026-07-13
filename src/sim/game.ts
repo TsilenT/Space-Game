@@ -7,6 +7,7 @@ import {
   type Point,
   type TacticalMap,
   type TacticalMission,
+  type TacticalObjective,
   type Team,
   type UnitPlacement,
 } from './map'
@@ -16,6 +17,9 @@ export type { Cell, CellKey, Point, Team } from './map'
 
 export type Phase = 'player' | 'enemy'
 export type Status = 'playing' | 'victory' | 'defeat'
+export type MissionResolution =
+  | { readonly result: 'victory'; readonly reason: 'hostiles-eliminated' | 'survivor-rescued' }
+  | { readonly result: 'defeat'; readonly reason: 'crew-lost' | 'deadline-expired' }
 
 export interface Unit extends Point {
   id: string
@@ -30,11 +34,12 @@ export interface Unit extends Point {
 export interface GameState {
   mission: TacticalMission
   map: TacticalMap
-  objective: string
+  objective: TacticalObjective
   visionRange: number
   units: Unit[]
   phase: Phase
   status: Status
+  resolution?: MissionResolution
   turn: number
   selectedId?: string
   explored: CellKey[]
@@ -43,7 +48,7 @@ export interface GameState {
 
 const ATTACK_RANGE = 4
 const ATTACK_COST = 2
-const CREW_DAMAGE = 3
+const DEFAULT_CREW_DAMAGE = 3
 const ENEMY_DAMAGE = 2
 
 const alive = (unit: Unit): boolean => unit.hp > 0
@@ -54,7 +59,7 @@ function createUnit(placement: UnitPlacement): Unit {
 }
 
 export function createGame(mission: TacticalMission = BOARDING_MISSION): GameState {
-  return reveal({
+  return reveal(evaluateMission({
     mission,
     map: mission.map,
     objective: mission.objective,
@@ -64,9 +69,9 @@ export function createGame(mission: TacticalMission = BOARDING_MISSION): GameSta
     turn: 1,
     selectedId: mission.units.find(unit => unit.team === 'crew')?.id,
     explored: [],
-    log: ['Boarding clamps locked. Locate and eliminate all hostiles.'],
+    log: [`Mission started. ${mission.objective.label}.`],
     units: mission.units.map(createUnit),
-  })
+  }))
 }
 
 export function currentVisibility(state: GameState): Point[] {
@@ -159,17 +164,53 @@ export function move(state: GameState, x: number, y: number): GameState {
   if (!unit || !legalMoves(state).some(point => key(point) === key(target))) return state
 
   const cost = shortestDistance(state, unit, target, unit.id)
-  return reveal({
+  return reveal(evaluateMission({
     ...state,
     units: state.units.map(candidate => candidate.id === unit.id ? { ...candidate, x, y, ap: candidate.ap - cost } : candidate),
     log: [`${unit.name} moved into ${roomAt(state.map, target)}.`, ...state.log].slice(0, 5),
-  })
+  }))
 }
 
-function outcome(state: GameState): GameState {
-  const crewAlive = state.units.some(unit => unit.team === 'crew' && alive(unit))
-  const enemyAlive = state.units.some(unit => unit.team === 'enemy' && alive(unit))
-  return { ...state, status: !enemyAlive ? 'victory' : !crewAlive ? 'defeat' : 'playing' }
+function finishMission(state: GameState, resolution: MissionResolution, log: string): GameState {
+  return {
+    ...state,
+    status: resolution.result,
+    resolution,
+    selectedId: undefined,
+    log: [log, ...state.log].slice(0, 5),
+  }
+}
+
+function evaluateMission(state: GameState, roundEnded = false): GameState {
+  if (state.status !== 'playing') return state
+
+  const livingCrew = state.units.filter(unit => unit.team === 'crew' && alive(unit))
+  if (livingCrew.length === 0) {
+    return finishMission(state, { result: 'defeat', reason: 'crew-lost' }, 'No boarding crew remain operational.')
+  }
+
+  const objective = state.objective
+  if (objective.kind === 'eliminate') {
+    const enemyAlive = state.units.some(unit => unit.team === 'enemy' && alive(unit))
+    return enemyAlive
+      ? state
+      : finishMission(state, { result: 'victory', reason: 'hostiles-eliminated' }, 'All hostile contacts eliminated.')
+  }
+
+  const survivorReached = livingCrew.some(unit => unit.x === objective.target.x && unit.y === objective.target.y)
+  if (survivorReached) {
+    return finishMission(state, { result: 'victory', reason: 'survivor-rescued' }, `${objective.targetName} secured.`)
+  }
+
+  if (roundEnded && state.turn >= objective.deadlineTurn) {
+    const destroyed = {
+      ...state,
+      units: state.units.map(unit => unit.team === 'crew' ? { ...unit, hp: 0 } : unit),
+    }
+    return finishMission(destroyed, { result: 'defeat', reason: 'deadline-expired' }, 'The stricken ship detonated with the boarding crew aboard.')
+  }
+
+  return state
 }
 
 function canHit(state: GameState, attacker: Unit, target: Unit): boolean {
@@ -192,14 +233,15 @@ export function attack(state: GameState, targetId: string): GameState {
   const target = legalTargets(state).find(unit => unit.id === targetId)
   if (!attacker || !target) return state
 
-  return reveal(outcome({
+  const damage = state.mission.crewDamage ?? DEFAULT_CREW_DAMAGE
+  return reveal(evaluateMission({
     ...state,
     units: state.units.map(unit => unit.id === attacker.id
       ? { ...unit, ap: unit.ap - ATTACK_COST }
       : unit.id === target.id
-        ? { ...unit, hp: Math.max(0, unit.hp - CREW_DAMAGE) }
+        ? { ...unit, hp: Math.max(0, unit.hp - damage) }
         : unit),
-    log: [`${attacker.name} fires on ${target.name}: ${CREW_DAMAGE} damage.`, ...state.log].slice(0, 5),
+    log: [`${attacker.name} fires on ${target.name}: ${damage} damage.`, ...state.log].slice(0, 5),
   }))
 }
 
@@ -234,7 +276,7 @@ function pathDistance(state: GameState, start: Point, end: Point, ignore?: strin
 
 export function enemyTurn(input: GameState): GameState {
   if (input.phase !== 'enemy') return input
-  let state = outcome(input)
+  let state = evaluateMission(input)
   if (state.status !== 'playing') return reveal(state)
 
   const enemies = state.units.filter(unit => unit.team === 'enemy' && alive(unit)).sort((a, b) => a.id.localeCompare(b.id))
@@ -270,9 +312,12 @@ export function enemyTurn(input: GameState): GameState {
       }
     }
 
-    state = outcome(state)
+    state = evaluateMission(state)
     if (state.status !== 'playing') return reveal(state)
   }
+
+  state = evaluateMission(state, true)
+  if (state.status !== 'playing') return reveal(state)
 
   return reveal({
     ...state,

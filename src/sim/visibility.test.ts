@@ -58,9 +58,10 @@ describe('deterministic line of sight', () => {
 function corridorMission(): TacticalMission {
   return {
     id: 'visibility-test',
-    objective: 'Test vision',
+    objective: { kind: 'eliminate', label: 'Test vision' },
     visionRange: 2,
     map: mapFrom('........'),
+    crewSpawns: [{ x: 0, y: 0 }, { x: 6, y: 0 }],
     units: [
       { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 4 },
       { id: 'milo', name: 'Milo', role: 'Engineer', team: 'crew', x: 6, y: 0, hp: 8, ap: 4 },
