@@ -27,6 +27,7 @@
   min-width: 0;
   padding-bottom: 18px;
   display: flex;
+  flex-wrap: wrap;
   align-items: start;
   justify-content: space-between;
   gap: 20px;
@@ -35,6 +36,11 @@
   font: 700 .68rem/1.5 'Space Mono', monospace;
   letter-spacing: .08em;
   text-transform: uppercase;
+}
+
+.campaign-strip > * {
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .campaign-strip strong,
@@ -147,6 +153,256 @@
   background: #10212d;
   color: var(--muted);
   opacity: .7;
+}
+
+.route-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.route-card {
+  min-width: 0;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--cyan);
+  background: linear-gradient(160deg, rgb(99 227 214 / 7%), #091722 45%);
+  overflow-wrap: anywhere;
+}
+
+.route-card.distress {
+  border-top-color: var(--red);
+  background: linear-gradient(160deg, rgb(255 102 112 / 10%), #091722 45%);
+}
+
+.route-card.starbase {
+  border-top-color: var(--cyan);
+}
+
+.route-card.abandoned-moon {
+  border-top-color: var(--gold);
+  background: linear-gradient(160deg, rgb(241 189 91 / 9%), #091722 45%);
+}
+
+.route-card h3 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.route-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.route-signal {
+  color: var(--cyan) !important;
+  font: 700 .65rem/1.45 'Space Mono', monospace;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+
+.distress .route-signal {
+  color: var(--red) !important;
+}
+
+.abandoned-moon .route-signal {
+  color: var(--gold) !important;
+}
+
+.route-likelihood {
+  margin-top: auto !important;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  background: #07111a;
+  color: var(--ink) !important;
+  font: 700 .67rem/1.55 'Space Mono', monospace;
+  letter-spacing: .035em;
+}
+
+.route-likelihood > * {
+  display: block;
+}
+
+.route-card button,
+.market-offer button {
+  width: 100%;
+  min-height: 44px;
+  padding: 12px 14px;
+  border: 1px solid var(--cyan);
+  background: var(--cyan);
+  color: #041012;
+  overflow-wrap: anywhere;
+}
+
+.route-card.distress button {
+  border-color: var(--red);
+  background: var(--red);
+}
+
+.route-card.abandoned-moon button {
+  border-color: var(--gold);
+  background: var(--gold);
+}
+
+.route-card button:hover:not(:disabled),
+.market-offer button:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.route-card button:disabled,
+.market-offer button:disabled {
+  cursor: not-allowed;
+  border-color: var(--line);
+  background: #10212d;
+  color: var(--muted);
+  opacity: .7;
+}
+
+.encounter-banner {
+  min-width: 0;
+  padding: 18px 20px;
+  border: 1px solid rgb(241 189 91 / 55%);
+  border-left: 4px solid var(--gold);
+  background: linear-gradient(90deg, rgb(241 189 91 / 10%), #09141e 55%);
+  color: var(--muted);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.encounter-banner > * {
+  margin-block: 0;
+}
+
+.encounter-banner > * + * {
+  margin-top: 7px;
+}
+
+.encounter-banner strong,
+.encounter-banner b {
+  color: var(--gold);
+}
+
+.event-deltas {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.event-delta {
+  min-width: 0;
+  margin: 0;
+  padding: 15px 16px;
+  background: #09141e;
+  color: var(--muted);
+  font: 700 .65rem/1.45 'Space Mono', monospace;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.event-delta strong,
+.event-delta b {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink);
+  font-size: .9rem;
+}
+
+.market-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 16px;
+}
+
+.market-offer {
+  min-width: 0;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--cyan);
+  background: #091722;
+  overflow-wrap: anywhere;
+}
+
+.market-offer h3,
+.market-offer p {
+  margin: 0;
+}
+
+.market-offer p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.market-offer button {
+  margin-top: auto;
+}
+
+.market-offer.sold-out,
+.market-offer:has(.sold-out) {
+  border-top-color: var(--line);
+  opacity: .68;
+}
+
+.market-offer .sold-out {
+  color: var(--muted) !important;
+  text-decoration: line-through;
+}
+
+button.sold-out {
+  cursor: not-allowed;
+  border-color: var(--line);
+  background: #10212d;
+  text-decoration: none;
+}
+
+.deadline {
+  min-width: 0;
+  padding: 15px 17px;
+  border: 1px solid rgb(255 102 112 / 55%);
+  border-left: 4px solid var(--red);
+  background: rgb(255 102 112 / 9%);
+  color: var(--ink);
+  font: 700 .76rem/1.55 'Space Mono', monospace;
+  overflow-wrap: anywhere;
+}
+
+.deadline strong,
+.deadline b {
+  color: var(--red);
+}
+
+.rescue-marker,
+.rescue-marker-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--gold);
+  font: 700 .68rem/1.45 'Space Mono', monospace;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.rescue-marker::before,
+.rescue-marker-legend::before {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgb(241 189 91 / 14%);
+  content: '';
 }
 
 .campaign-roster {
@@ -283,6 +539,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     margin-top: 18px;
   }
+
+  .route-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 700px) {
@@ -301,8 +561,13 @@
   }
 
   .campaign-strip {
-    flex-direction: column;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px 16px;
+  }
+
+  .campaign-strip > * {
+    white-space: normal;
   }
 
   .campaign-stats {
@@ -310,8 +575,14 @@
   }
 
   .campaign-choice-grid,
-  .campaign-report {
+  .campaign-report,
+  .route-grid,
+  .market-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .event-deltas {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .campaign-crew {
@@ -327,5 +598,17 @@
   .campaign-actions button {
     width: 100%;
     min-width: 0;
+  }
+}
+
+@media (max-width: 390px) {
+  .campaign-strip,
+  .event-deltas {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .route-card,
+  .market-offer {
+    padding: 18px;
   }
 }

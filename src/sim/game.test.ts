@@ -59,9 +59,10 @@ const doorLegend = {
 function doorMission(): TacticalMission {
   return {
     id: 'door-test',
-    objective: 'Test doors',
+    objective: { kind: 'eliminate', label: 'Test doors' },
     visionRange: 3,
     map: defineTacticalMap({ rows: ['..D..'], legend: doorLegend }),
+    crewSpawns: [{ x: 0, y: 0 }],
     units: [
       { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 4 },
       { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 4, y: 0, hp: 6, ap: 4 },
@@ -98,12 +99,14 @@ describe('closed doors', () => {
   it('does not let a unit path through a closed door even when shared crew vision reveals the far side', () => {
     const mission: TacticalMission = {
       id: 'door-test-two-sided',
-      objective: 'Test doors from both sides',
+      objective: { kind: 'eliminate', label: 'Test doors from both sides' },
       visionRange: 2,
       map: defineTacticalMap({ rows: ['..D...'], legend: doorLegend }),
+      crewSpawns: [{ x: 0, y: 0 }, { x: 4, y: 0 }],
       units: [
         { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 4 },
         { id: 'milo', name: 'Milo', role: 'Engineer', team: 'crew', x: 4, y: 0, hp: 8, ap: 4 },
+        { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 5, y: 0, hp: 6, ap: 4 },
       ],
     }
     const game = createGame(mission)

@@ -27,11 +27,11 @@ describe('TurnController', () => {
   })
 
   it('restarts the mission definition it was given', () => {
-    const mission = { ...BOARDING_MISSION, id: 'custom-mission', objective: 'Hold the bridge' }
+    const mission = { ...BOARDING_MISSION, id: 'custom-mission', objective: { kind: 'eliminate' as const, label: 'Hold the bridge' } }
     const controller = new TurnController(createGame(mission), vi.fn(), () => 1, vi.fn())
     controller.restart()
     expect(controller.current.mission.id).toBe('custom-mission')
-    expect(controller.current.objective).toBe('Hold the bridge')
+    expect(controller.current.objective.label).toBe('Hold the bridge')
   })
 
   it('invalidates a stale enemy callback after cancellation', () => {

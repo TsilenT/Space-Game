@@ -9,7 +9,7 @@ This document records durable choices separately from questions that still need 
 - The prototype is browser-first and uses TypeScript, Phaser 4, Vite, and Vitest.
 - Tactical play uses a 2D top-down square grid with action points.
 - Deterministic rules live under `src/sim` and do not depend on Phaser.
-- The first playable remains a hand-authored boarding encounter; campaign and ship-management breadth follows after the tactical loop is proven.
+- The foundation began with one hand-authored boarding encounter; campaign and ship-management breadth follows in proven playable increments.
 
 ### Shared tactical visibility — July 12, 2026
 
@@ -22,15 +22,21 @@ This document records durable choices separately from questions that still need 
 
 This choice keeps a four-person prototype readable while creating reusable foundations for doors, cover, smoke, sensors, hazards, and additional maps.
 
-### Whole-loop demo — July 12, 2026
+### Whole-loop foundation — July 12, 2026 (encounter structure superseded)
 
-- The demo connects one strategic encounter, the boarding mission, persistent consequences and one ship-side recovery choice, then returns the player to the next encounter.
-- It begins with 4 fuel, 1 salvage, and 75/100 hull. Boarding victory awards 4 salvage and causes 8 hull strain; every jump consumes 1 fuel.
-- Recovery is one choice: spend 2 salvage to heal each living wounded crew member by 2 HP, spend 2 salvage to restore 15 hull, or bank the salvage.
-- The encounter also exposes the specification's four strategic actions: board, scavenge, repair, and jump away. Scavenging trades 3 hull and 1 fuel for 1 salvage.
-- Crew wounds and death persist. Tactical defeat, zero hull, or zero fuel ends the demo campaign; a new run is explicit.
-- The same hand-authored contact repeats so persistence can be playtested without implying procedural content or a finished galaxy layer.
-- Defer cover, overwatch, inventory breadth, research trees, procedural generation, and broad campaign simulation until that compact loop is playable and useful for creative direction.
+- The first end-to-end build connected one strategic contact, boarding mission, persistent consequences, ship-side recovery choice, and next jump.
+- It established persistent crew wounds and death, hull damage, salvage spending, fuel pressure, and explicit campaign loss/restart behavior.
+- Its fixed contact, fixed reward, and board/scavenge/repair/withdraw screen were temporary validation tuning. The frontier route decision below replaces that encounter structure while preserving its persistence rules.
+
+### Frontier route variety — July 12, 2026
+
+- Navigation becomes the stable between-encounter phase. Every route presents one distress call, one starbase, and one abandoned moon; choosing a destination consumes one fuel.
+- Encounter rolls are deterministic and seeded. A new run draws a fresh seed, while an explicit `?seed=` URL reproduces a run for playtesting. Each outcome is rolled once on arrival and applied at most once, so rendering or inspection cannot reroll it.
+- Distress calls can reveal a survivor, pirates attacking a civilian ship, or a deliberate trap. The rescue variant gives the squad through Turn 8 to reach the survivor before the ship explodes.
+- Starbases provide a compact market for fuel, salvage exchange, a modest weapon improvement, and a possible mercenary offer. Credits remain distinct from salvage so trade and physical recovery have different pressures.
+- Abandoned moons usually provide salvage, sometimes reveal a recruit, rarely contain fuel, and occasionally hide a hull-damaging space amoeba.
+- Recruited survivors and mercenaries join the persistent roster, capped at six living crew for this slice, and can deploy on later missions. KIA records remain visible without blocking a replacement.
+- Mission variety uses three validated, hand-authored layouts with seeded encounters. Unconstrained procedural ship generation is deferred until authored rooms and objectives establish useful generator constraints.
 
 ### Closed doors — July 12, 2026
 
@@ -46,5 +52,5 @@ This choice keeps a four-person prototype readable while creating reusable found
 3. Should crew roles remain equipment-based or become more class-like?
 4. How lethal should the later full campaign be beyond the demo's current tuning?
 5. Should the tone lean serious, comedic, or deliberately mixed?
-6. Should later missions be hand-authored, procedurally generated, or hybrid?
+6. When should the authored mission modules become a constrained procedural generator?
 7. Doors are now in; which tactical system should follow next: cover, overwatch, or environmental hazards?

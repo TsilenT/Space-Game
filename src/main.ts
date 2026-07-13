@@ -3,16 +3,30 @@ import './style.css'
 import './responsive.css'
 import './campaign.css'
 import {
-  beginBoarding,
+  CAMPAIGN_TUNING,
+  beginMission,
   boardingMissionFor,
+  buyFuel,
+  buyWeapon,
+  chooseDestination,
   chooseRecovery,
+  continueEncounter,
   createCampaign,
-  jumpAway,
-  repairShip,
-  resolveBoarding,
-  scavengeEncounter,
+  declineEncounter,
+  hireMercenary,
+  leaveStarbase,
+  missionFor,
+  resolveEncounter,
+  resolveMission,
+  sellSalvage,
   type CampaignCrew,
+  type CampaignEncounter,
   type CampaignState,
+  type DestinationKind,
+  type DestinationOffer,
+  type DistressEncounter,
+  type MoonEncounter,
+  type StarbaseEncounter,
 } from './sim/campaign'
 import { attack, createGame, currentVisibility, type GameState, legalMoves, legalTargets, move, selectUnit } from './sim/game'
 import { cellAt, isWalkable, key } from './sim/map'
@@ -25,14 +39,28 @@ const ROOM_COLORS: Record<string, number> = {
   Reactor: 0x302538,
   Bridge: 0x192c45,
   Weapons: 0x302c27,
+  Dock: 0x132b38,
+  Commons: 0x173437,
+  Engineering: 0x302538,
+  Airlock: 0x132b38,
+  Crossway: 0x302538,
+  Cargo: 0x302c27,
+  Barracks: 0x192c45,
 }
 
-let campaign = createCampaign()
+const seedText = new URLSearchParams(window.location.search).get('seed')
+const requestedSeed = seedText === null ? undefined : Number(seedText)
+const runSeed = requestedSeed !== undefined && Number.isInteger(requestedSeed) && requestedSeed >= 0 ? requestedSeed : undefined
+const freshRunSeed = () => window.crypto.getRandomValues(new Uint32Array(1))[0]
+const createRun = () => createCampaign(runSeed ?? freshRunSeed())
+
+let campaign = createRun()
 let state = createGame(boardingMissionFor(campaign))
 let controller: TurnController
 let sceneReady = false
 let focusNextScreen = true
 let focusNextTactical = false
+let focusNextAction: string | undefined
 let transitionLocked = false
 
 const tacticalContainer = document.querySelector<HTMLElement>('#phaser-game')!
@@ -47,6 +75,19 @@ campaignScreen.id = 'campaign-screen'
 campaignScreen.hidden = true
 campaignScreen.setAttribute('aria-label', 'Campaign command screen')
 consoleElement.insertBefore(campaignScreen, tacticalContainer)
+
+function terminalTitle(current: GameState): string {
+  if (current.resolution?.reason === 'survivor-rescued') return 'SURVIVOR SECURED'
+  if (current.resolution?.reason === 'deadline-expired') return 'SHIP DETONATED'
+  if (current.status === 'victory') return 'SHIP SECURED'
+  return 'BOARDING TEAM LOST'
+}
+
+function terminalSubtitle(current: GameState): string {
+  if (current.resolution?.reason === 'survivor-rescued') return 'The rescue target is aboard. Carry the damage home.'
+  if (current.resolution?.reason === 'deadline-expired') return 'The blast took the deployed crew and struck your hull.'
+  return current.status === 'victory' ? 'Continue to carry the damage home.' : 'Continue to the campaign report.'
+}
 
 class TacticalScene extends Phaser.Scene {
   create() {
@@ -103,6 +144,13 @@ class TacticalScene extends Phaser.Scene {
       graphics.fillStyle(0xf1bd5b, isVisible ? .55 : .2).fillRoundedRect(OX + system.x * CELL + 12, OY + system.y * CELL + 12, 32, 32, 5)
       this.add.text(OX + system.x * CELL + 15, OY + system.y * CELL + 22, system.system, { fontFamily: 'monospace', fontSize: '10px', color: isVisible ? '#08121c' : '#7d704e' })
     }
+    if (state.objective.kind === 'rescue') {
+      const target = state.objective.target
+      const cx = OX + target.x * CELL + 28, cy = OY + target.y * CELL + 28
+      graphics.fillStyle(0xf1bd5b, .18).fillCircle(cx, cy, 23)
+      graphics.lineStyle(3, 0xf1bd5b, 1).strokeCircle(cx, cy, 20)
+      this.add.text(cx, cy, 'SOS', { fontFamily: 'monospace', fontSize: '11px', fontStyle: 'bold', color: '#f1bd5b' }).setOrigin(.5)
+    }
     for (const unit of state.units.filter(unit => unit.hp > 0 && (unit.team === 'crew' || visible.has(key(unit))))) {
       const cx = OX + unit.x * CELL + 28, cy = OY + unit.y * CELL + 28
       if (unit.id === state.selectedId) graphics.lineStyle(3, 0xffffff, 1).strokeCircle(cx, cy, 22)
@@ -117,11 +165,12 @@ class TacticalScene extends Phaser.Scene {
       const roomVisible = visible.has(key(room.label))
       this.add.text(OX + room.label.x * CELL, OY + room.label.y * CELL + (room.label.y ? 35 : 8), room.name.toUpperCase(), { fontFamily: 'monospace', fontSize: '11px', color: roomVisible ? '#91a9b8' : '#425866' })
     })
-    this.add.text(52, 28, `TURN ${String(state.turn).padStart(2, '0')}  //  ${state.phase.toUpperCase()} PHASE`, { fontFamily: 'monospace', fontSize: '18px', color: state.phase === 'player' ? '#63e3d6' : '#ff6670' })
+    const deadline = state.objective.kind === 'rescue' ? ` / ${String(state.objective.deadlineTurn).padStart(2, '0')}` : ''
+    this.add.text(52, 28, `TURN ${String(state.turn).padStart(2, '0')}${deadline}  //  ${state.phase.toUpperCase()} PHASE`, { fontFamily: 'monospace', fontSize: '18px', color: state.phase === 'player' ? '#63e3d6' : '#ff6670' })
     if (state.status !== 'playing') {
       graphics.fillStyle(0x02060b, .86).fillRect(0, 0, 800, 600)
-      this.add.text(400, 260, state.status === 'victory' ? 'SHIP SECURED' : 'BOARDING TEAM LOST', { fontFamily: 'monospace', fontSize: '32px', fontStyle: 'bold', color: state.status === 'victory' ? '#63e3d6' : '#ff6670' }).setOrigin(.5)
-      this.add.text(400, 305, state.status === 'victory' ? 'Continue to carry the damage home.' : 'Continue to the campaign report.', { fontFamily: 'monospace', fontSize: '15px', color: '#c7d6df' }).setOrigin(.5)
+      this.add.text(400, 260, terminalTitle(state), { fontFamily: 'monospace', fontSize: '32px', fontStyle: 'bold', color: state.status === 'victory' ? '#63e3d6' : '#ff6670' }).setOrigin(.5)
+      this.add.text(400, 305, terminalSubtitle(state), { fontFamily: 'monospace', fontSize: '15px', color: '#c7d6df' }).setOrigin(.5)
     }
     updateTacticalHud(state)
   }
@@ -136,7 +185,7 @@ new Phaser.Game({ type: Phaser.AUTO, parent: 'phaser-game', width: 800, height: 
 
 function campaignStrip(current: CampaignState): string {
   const living = current.crew.filter(crew => crew.hp > 0).length
-  return `<div class="campaign-strip"><span>JUMP <b>${String(current.jump).padStart(2, '0')}</b></span><span>FUEL <b>${current.fuel}</b></span><span>SALVAGE <b>${current.salvage}</b></span><span>HULL <b>${current.hull}/${current.maxHull}</b></span><span>CREW <b>${living}/${current.crew.length}</b></span></div>`
+  return `<div class="campaign-strip"><span>JUMP <b>${String(current.jump).padStart(2, '0')}</b></span><span>FUEL <b>${current.fuel}/${current.maxFuel}</b></span><span>CREDITS <b>${current.credits}</b></span><span>SALVAGE <b>${current.salvage}</b></span><span>HULL <b>${current.hull}/${current.maxHull}</b></span><span>RIFLES <b>${current.weaponDamage} DMG</b></span><span>CREW <b>${living}/${current.crew.length}</b></span></div>`
 }
 
 function crewCondition(crew: CampaignCrew): { label: string; className: string } {
@@ -152,49 +201,165 @@ function campaignRoster(crew: readonly CampaignCrew[]): string {
   }).join('')}</div>`
 }
 
+const ROUTE_COPY: Readonly<Record<DestinationKind, { signal: string; heading: string; body: string; likely: string; danger: string }>> = {
+  distress: {
+    signal: 'CREW // HIGH RISK',
+    heading: 'Answer the call',
+    body: 'Often a survivor. Sometimes pirates are already there. Sometimes they sent it.',
+    likely: 'Likely: crew',
+    danger: 'Danger: high',
+  },
+  starbase: {
+    signal: 'TRADE // RELIABLE',
+    heading: 'Dock and resupply',
+    body: 'Fuel is usually available. Weapons, salvage rates, and hired help vary.',
+    likely: 'Likely: fuel',
+    danger: 'Danger: low',
+  },
+  'abandoned-moon': {
+    signal: 'SALVAGE // UNCERTAIN',
+    heading: 'Survey the ruins',
+    body: 'Salvage is likely. A survivor is possible. Fuel is rare. The moon may not be empty.',
+    likely: 'Likely: salvage',
+    danger: 'Danger: uncertain',
+  },
+}
+
+function routeCard(offer: DestinationOffer): string {
+  const copy = ROUTE_COPY[offer.kind]
+  return `<article class="route-card ${offer.kind}"><p class="route-signal">${copy.signal}</p><h3>${offer.name}</h3><p><strong>${copy.heading}</strong></p><p>${copy.body}</p><p class="route-likelihood"><span>${copy.likely}</span><span>${copy.danger}</span></p><button data-campaign-action="route:${offer.id}">JUMP TO ${offer.name.toUpperCase()} · 1 FUEL</button></article>`
+}
+
+function renderRoute(): string {
+  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">NAVIGATION // JUMP ROUTE</p><h2 id="campaign-heading" tabindex="-1">Three signals. Fuel for one.</h2><p class="campaign-lede">Every jump costs 1 fuel. Signal profiles predict the kind of opportunity—not what waits there. The roll resolves once when you arrive. Run seed: ${campaign.seed}.</p><div class="route-grid">${campaign.offers.map(routeCard).join('')}</div></div>`
+}
+
+function moonResult(encounter: MoonEncounter): { kicker: string; heading: string; body: string; deltas: string[] } {
+  if (encounter.outcome === 'salvage') return { kicker: 'MOON // REFINERY CACHE', heading: 'The refinery is dead. Its cargo winches are not.', body: 'Sealed alloy crates come free beneath a century of dust.', deltas: [`SALVAGE|+${encounter.salvage}`] }
+  if (encounter.outcome === 'survivor') {
+    const joined = encounter.recruit && campaign.crew.some(crew => crew.id === encounter.recruit!.id)
+    return { kicker: 'MOON // PRESSURE SHELTER', heading: 'Someone answers from beneath the regolith.', body: joined ? `${encounter.recruit!.name} joins the ship with whatever they could carry.` : 'The roster is full, but the survivor reaches safety.', deltas: [joined ? 'CREW|+1 SURVIVOR' : 'CREW|ROSTER FULL'] }
+  }
+  if (encounter.outcome === 'fuel') return { kicker: 'MOON // EMERGENCY DEPOT', heading: 'The reserve tanks still hold pressure.', body: 'Ancient propellant is ugly, stable, and exactly what the engines need.', deltas: [`FUEL CACHE|UP TO +${encounter.fuel}`] }
+  return { kicker: 'MOON // BIOLOGICAL CONTACT', heading: 'Something vast rolls through your engine wake.', body: 'The space amoeba leaves luminous scars across the hull and vanishes into the dark.', deltas: [`HULL|-${encounter.hullDamage}`] }
+}
+
+function eventDeltas(deltas: readonly string[]): string {
+  return `<div class="event-deltas">${deltas.map(delta => {
+    const [label, value] = delta.split('|')
+    return `<p class="event-delta">${label}<strong>${value}</strong></p>`
+  }).join('')}</div>`
+}
+
+function renderMoon(encounter: MoonEncounter): string {
+  if (encounter.resolved) {
+    const result = moonResult(encounter)
+    return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">${result.kicker}</p><h2 id="campaign-heading" tabindex="-1">${result.heading}</h2><p class="campaign-lede">${result.body}</p>${eventDeltas(result.deltas)}${encounter.recruit ? campaignRoster(campaign.crew) : ''}<div class="campaign-actions"><button data-campaign-action="continue-encounter">RETURN TO NAVIGATION</button></div></div>`
+  }
+  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">ARRIVAL // ABANDONED MOON</p><h2 id="campaign-heading" tabindex="-1">${encounter.name} has been silent for eighty years.</h2><p class="campaign-lede">Scans show buried structures and intermittent heat below the dust. Salvage is likely; fuel and survivors are not impossible.</p><div class="encounter-banner"><p><strong>UNCERTAIN SURVEY</strong></p><p>The signal is real. Its source is not yet clear.</p></div><div class="campaign-actions"><button data-campaign-action="resolve-encounter">LAND A SURVEY TEAM</button><button data-campaign-action="decline-encounter">LEAVE IT BURIED</button></div></div>`
+}
+
+function renderStarbase(encounter: StarbaseEncounter): string {
+  const fuelDisabled = encounter.fuelStock <= 0 || campaign.credits < encounter.fuelPrice || campaign.fuel >= campaign.maxFuel
+  const weaponOwned = campaign.weaponDamage > CAMPAIGN_TUNING.baseWeaponDamage
+  const weaponDisabled = weaponOwned || !encounter.weaponAvailable || campaign.credits < encounter.weaponPrice
+  const livingCrew = campaign.crew.filter(crew => crew.hp > 0).length
+  const mercDisabled = !encounter.mercenary || campaign.credits < encounter.mercenaryPrice || livingCrew >= CAMPAIGN_TUNING.rosterCap
+  const sellDisabled = campaign.salvage <= 0
+  const fuelUnits = `${encounter.fuelStock} ${encounter.fuelStock === 1 ? 'unit' : 'units'}`
+  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">STARBASE // MARKET</p><h2 id="campaign-heading" tabindex="-1">${encounter.name} sells survival at a markup.</h2><p class="campaign-lede">Purchases do not consume another jump. Stock and contracts were rolled on arrival; depart when ready.</p><div class="market-grid"><article class="market-offer ${encounter.fuelStock <= 0 ? 'sold-out' : ''}"><p class="kicker">DOCKMASTER // FUEL</p><h3>Reactor propellant</h3><p>${fuelUnits} in stock. Buy 1 fuel for ${encounter.fuelPrice} credits.</p><button data-campaign-action="buy-fuel" ${fuelDisabled ? 'disabled' : ''}>${encounter.fuelStock <= 0 ? 'SOLD OUT' : campaign.fuel >= campaign.maxFuel ? 'TANKS FULL' : campaign.credits < encounter.fuelPrice ? `NEED ${encounter.fuelPrice} CREDITS` : `BUY 1 FUEL · ${encounter.fuelPrice} CREDITS`}</button></article><article class="market-offer"><p class="kicker">BROKER // SALVAGE</p><h3>Sell recovered material</h3><p>Trade 1 salvage for ${CAMPAIGN_TUNING.salvageSalePrice} credits. The rate is insulting and reliable.</p><button data-campaign-action="sell-salvage" ${sellDisabled ? 'disabled' : ''}>${sellDisabled ? 'NO SALVAGE' : `SELL 1 SALVAGE · +${CAMPAIGN_TUNING.salvageSalePrice} CREDITS`}</button></article><article class="market-offer ${weaponDisabled ? 'sold-out' : ''}"><p class="kicker">SURPLUS // WEAPONS</p><h3>Mediocre boarding rifles</h3><p>Permanent +1 crew weapon damage. One upgrade is enough for this prototype.</p><button data-campaign-action="buy-weapon" ${weaponDisabled ? 'disabled' : ''}>${weaponOwned ? 'ALREADY INSTALLED' : !encounter.weaponAvailable ? 'NO STOCK' : campaign.credits < encounter.weaponPrice ? `NEED ${encounter.weaponPrice} CREDITS` : `BUY RIFLES · ${encounter.weaponPrice} CREDITS`}</button></article><article class="market-offer ${!encounter.mercenary ? 'sold-out' : ''}"><p class="kicker">CONTRACT // CREW</p><h3>${encounter.mercenary?.name ?? 'No one is taking contracts'}</h3><p>${encounter.mercenary ? `${encounter.mercenary.role}. Fit, armed, and asking ${encounter.mercenaryPrice} credits.` : 'The mercenary booth is empty this jump.'}</p><button data-campaign-action="hire-mercenary" ${mercDisabled ? 'disabled' : ''}>${livingCrew >= CAMPAIGN_TUNING.rosterCap ? 'ROSTER FULL' : !encounter.mercenary ? 'NO CONTRACT' : campaign.credits < encounter.mercenaryPrice ? `NEED ${encounter.mercenaryPrice} CREDITS` : `HIRE · ${encounter.mercenaryPrice} CREDITS`}</button></article></div><div class="campaign-actions"><button data-campaign-action="leave-starbase">PLOT NEXT JUMP</button></div></div>`
+}
+
+function distressBriefing(encounter: DistressEncounter): { kicker: string; heading: string; body: string; button: string; deadline?: string } {
+  if (encounter.outcome === 'survivor') return { kicker: 'DISTRESS // LIFEBOAT', heading: 'One weak voice answers the hail.', body: 'No weapons lock. No second transponder. Just a failing life-support cell.', button: 'RECOVER THE SURVIVOR' }
+  if (encounter.outcome === 'pirates') return { kicker: 'DISTRESS // PIRATE ATTACK', heading: 'Two transponders overlap. One is firing.', body: 'A pirate cutter has grappled a civilian courier. Board the attackers, clear their ship, and the survivor may join you.', button: 'BOARD THE PIRATE CUTTER' }
+  if (encounter.outcome === 'rescue') return { kicker: 'DISTRESS // REACTOR FAILURE', heading: 'Eight turns before the ship breaks apart.', body: 'Pirates are still aboard. Reach the survivor before the end of Turn 8; contact auto-extracts the team.', button: 'LAUNCH RESCUE', deadline: 'MISS THE DEADLINE: DEPLOYED CREW KILLED · SHIP TAKES 20 HULL' }
+  return { kicker: 'DISTRESS // SIGNAL SPOOFED', heading: 'The distress code repeats too cleanly.', body: 'Boarders were waiting inside the wreck. The ambush closes behind your team.', button: 'SPRING THE TRAP' }
+}
+
+function renderDistress(encounter: DistressEncounter): string {
+  if (encounter.resolved) {
+    const joined = encounter.recruit && campaign.crew.some(crew => crew.id === encounter.recruit!.id)
+    return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">DISTRESS // SURVIVOR RECOVERED</p><h2 id="campaign-heading" tabindex="-1">A new voice answers the next roll call.</h2><p class="campaign-lede">${joined ? `${encounter.recruit!.name}, ${encounter.recruit!.role.toLowerCase()}, joins the persistent crew.` : 'The survivor is safe, but the six-person roster is already full.'}</p>${eventDeltas([joined ? 'CREW|+1 SURVIVOR' : 'CREW|ROSTER FULL'])}${campaignRoster(campaign.crew)}<div class="campaign-actions"><button data-campaign-action="continue-encounter">RETURN TO NAVIGATION</button></div></div>`
+  }
+  const briefing = distressBriefing(encounter)
+  const mission = encounter.outcome !== 'survivor'
+  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">${briefing.kicker}</p><h2 id="campaign-heading" tabindex="-1">${briefing.heading}</h2><p class="campaign-lede">${briefing.body}</p>${briefing.deadline ? `<div class="deadline"><strong>EIGHT-TURN DEADLINE</strong><br>${briefing.deadline}</div>` : ''}<div class="campaign-actions"><button data-campaign-action="${mission ? 'begin-mission' : 'resolve-encounter'}">${briefing.button}</button><button data-campaign-action="decline-encounter">BREAK OFF</button></div></div>`
+}
+
 function renderEncounter(): string {
-  const repairDisabled = campaign.salvage < 2 || campaign.hull >= campaign.maxHull
-  const repeatedContact = campaign.jump > 1
-  const heading = repeatedContact ? 'Another Wraith cutter echoes the same signal.' : 'A Wraith cutter is running dark.'
-  const repeatNote = repeatedContact ? ' This demo repeats one authored contact so you can test what survived the jump.' : ''
-  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">ENCOUNTER // HOSTILE CONTACT</p><h2 id="campaign-heading" tabindex="-1">${heading}</h2><p class="campaign-lede">Its drives are dead. Its bridge is not. Board it for salvage, strip the debris, repair in place, or spend fuel to leave it behind.${repeatNote}</p><div class="campaign-stats"><span>CONTACT<strong>3 HOSTILES</strong></span><span>BOARDING TEAM<strong>${campaign.crew.filter(crew => crew.hp > 0).length} READY</strong></span><span>MISSION RESULT<strong>+4 SALVAGE · -8 HULL</strong></span></div><div class="campaign-choice-grid"><article class="campaign-choice"><p class="kicker">FIGHT // BOARD</p><h3>Take the cutter</h3><p>Deploy every living crew member. Wounds and death come home with them. Securing the cutter always strains your hull for 8.</p><button data-campaign-action="board">BOARD THE CUTTER</button></article><article class="campaign-choice"><p class="kicker">SALVAGE // CAUTIOUS</p><h3>Skim the debris</h3><p>Gain 1 salvage, suffer 3 hull damage, and burn 1 fuel reaching the next contact.</p><button data-campaign-action="scavenge">SCAVENGE & JUMP</button></article><article class="campaign-choice"><p class="kicker">SHIP // REPAIR</p><h3>Patch the hull</h3><p>Spend 2 salvage to restore 15 hull without leaving this encounter.</p><button data-campaign-action="repair" ${repairDisabled ? 'disabled' : ''}>${campaign.hull >= campaign.maxHull ? 'HULL IS INTACT' : campaign.salvage < 2 ? 'NEED 2 SALVAGE' : 'REPAIR SHIP'}</button></article><article class="campaign-choice"><p class="kicker">NAVIGATION // WITHDRAW</p><h3>Jump away</h3><p>Preserve crew and hull, spend 1 fuel, and face the next contact empty-handed.</p><button data-campaign-action="jump">JUMP AWAY · 1 FUEL</button></article></div></div>`
+  const encounter = campaign.encounter!
+  if (encounter.kind === 'starbase') return renderStarbase(encounter)
+  if (encounter.kind === 'abandoned-moon') return renderMoon(encounter)
+  return renderDistress(encounter)
+}
+
+function debriefHeading(): string {
+  if (campaign.activeMission?.kind === 'timed-rescue') return 'The survivor is aboard. The ship dies behind you.'
+  if (campaign.activeMission?.kind === 'distress-trap') return 'The bait had teeth. You took them.'
+  return 'The distress ship is safe enough to search.'
 }
 
 function renderDebrief(): string {
   const report = campaign.missionReport!
   const wounded = campaign.crew.some(crew => crew.hp > 0 && crew.hp < crew.maxHp)
-  const canTreat = campaign.salvage >= 2 && wounded
-  const canRepair = campaign.salvage >= 2 && campaign.hull < campaign.maxHull
-  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">AFTER ACTION // SHIP SECURED</p><h2 id="campaign-heading" tabindex="-1">The cutter is quiet. Your crew is not unchanged.</h2><p class="campaign-lede">Salvage teams recovered what they could. Choose one intervention before the ship burns fuel for the next jump; everything else carries forward.</p><div class="campaign-report"><span>MISSION<strong>VICTORY · JUMP ${report.jump}</strong></span><span>RECOVERED<strong>+${report.salvageGained} SALVAGE</strong></span><span>BOARDING STRAIN<strong>-${report.hullDamage} HULL</strong></span></div>${campaignRoster(campaign.crew)}<div class="campaign-choice-grid"><article class="campaign-choice"><p class="kicker">MEDBAY // TRIAGE</p><h3>Treat the survivors</h3><p>Spend 2 salvage. Every living wounded crew member recovers 2 HP.</p><button data-campaign-action="recover-crew" ${canTreat ? '' : 'disabled'}>${wounded ? campaign.salvage >= 2 ? 'TRIAGE & JUMP' : 'NEED 2 SALVAGE' : 'NO WOUNDED CREW'}</button></article><article class="campaign-choice"><p class="kicker">WORKSHOP // HULL</p><h3>Seal the damage</h3><p>Spend 2 salvage to restore 15 hull before committing to the next contact.</p><button data-campaign-action="recover-hull" ${canRepair ? '' : 'disabled'}>${campaign.hull >= campaign.maxHull ? 'HULL IS INTACT' : campaign.salvage >= 2 ? 'REPAIR & JUMP' : 'NEED 2 SALVAGE'}</button></article><article class="campaign-choice"><p class="kicker">CARGO // RESERVE</p><h3>Bank the salvage</h3><p>Make no repairs. Carry every recovered unit of salvage into the next encounter.</p><button data-campaign-action="recover-bank">BANK & JUMP</button></article></div></div>`
+  const canTreat = campaign.salvage >= CAMPAIGN_TUNING.repairCost && wounded
+  const canRepair = campaign.salvage >= CAMPAIGN_TUNING.repairCost && campaign.hull < campaign.maxHull
+  const recruit = campaign.activeMission?.recruit
+  const recruited = recruit && campaign.crew.some(crew => crew.id === recruit.id)
+  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">AFTER ACTION // ${campaign.activeMission?.kind.replaceAll('-', ' ').toUpperCase()}</p><h2 id="campaign-heading" tabindex="-1">${debriefHeading()}</h2><p class="campaign-lede">Choose one intervention before returning to navigation. Every untreated wound and every unspent resource carries forward.</p><div class="campaign-report"><span>MISSION<strong>VICTORY · JUMP ${report.jump}</strong></span><span>SALVAGE<strong>+${report.salvageGained}</strong></span><span>CREDITS<strong>+${report.creditsGained}</strong></span><span>FUEL<strong>+${report.fuelGained}</strong></span><span>HULL DAMAGE<strong>-${report.hullDamage}</strong></span><span>OBJECTIVE<strong>${report.objective}</strong></span></div>${recruited ? `<div class="encounter-banner"><p><strong>NEW CREW // ${recruit.name.toUpperCase()}</strong></p><p>${recruit.role} · ${recruit.hp}/${recruit.maxHp} HP</p></div>` : ''}${campaignRoster(campaign.crew)}<div class="campaign-choice-grid"><article class="campaign-choice"><p class="kicker">MEDBAY // TRIAGE</p><h3>Treat the survivors</h3><p>Spend ${CAMPAIGN_TUNING.repairCost} salvage. Every living wounded crew member recovers ${CAMPAIGN_TUNING.crewRecoveryAmount} HP.</p><button data-campaign-action="recover-crew" ${canTreat ? '' : 'disabled'}>${wounded ? campaign.salvage >= CAMPAIGN_TUNING.repairCost ? 'TRIAGE & NAVIGATE' : `NEED ${CAMPAIGN_TUNING.repairCost} SALVAGE` : 'NO WOUNDED CREW'}</button></article><article class="campaign-choice"><p class="kicker">WORKSHOP // HULL</p><h3>Seal the damage</h3><p>Spend ${CAMPAIGN_TUNING.repairCost} salvage to restore ${CAMPAIGN_TUNING.repairAmount} hull before plotting the next jump.</p><button data-campaign-action="recover-hull" ${canRepair ? '' : 'disabled'}>${campaign.hull >= campaign.maxHull ? 'HULL IS INTACT' : campaign.salvage >= CAMPAIGN_TUNING.repairCost ? 'REPAIR & NAVIGATE' : `NEED ${CAMPAIGN_TUNING.repairCost} SALVAGE`}</button></article><article class="campaign-choice"><p class="kicker">CARGO // RESERVE</p><h3>Bank the salvage</h3><p>Make no repairs. Carry everything recovered into the next route choice.</p><button data-campaign-action="recover-bank">BANK & NAVIGATE</button></article></div></div>`
 }
 
 function lossReason(): { kicker: string; heading: string; body: string } {
-  if (campaign.missionReport?.outcome === 'defeat') return { kicker: 'CAMPAIGN LOST // BOARDING TEAM DOWN', heading: 'The cutter kept its dead.', body: 'The mission failed and the ship no longer has a viable boarding command.' }
-  if (campaign.hull <= 0) return { kicker: 'CAMPAIGN LOST // HULL FAILURE', heading: 'The ship came apart between decisions.', body: 'There was not enough hull left to carry the crew to another contact.' }
-  return { kicker: 'CAMPAIGN LOST // FUEL EXHAUSTED', heading: 'The last jump emptied the tanks.', body: 'The ship and its surviving crew are stranded before the next encounter.' }
+  if (campaign.missionReport?.reason === 'deadline-expired') return { kicker: 'CAMPAIGN LOST // REACTOR DETONATION', heading: 'The reactor went before extraction.', body: 'The deployed crew died aboard the distress ship. The blast tore through your hull and ended the run.' }
+  if (campaign.missionReport?.outcome === 'defeat') return { kicker: 'CAMPAIGN LOST // BOARDING TEAM DOWN', heading: 'No one returned from the signal.', body: 'The mission failed and the ship no longer has a viable boarding command.' }
+  if (!campaign.crew.some(crew => crew.hp > 0)) return { kicker: 'CAMPAIGN LOST // NO CREW', heading: 'The last name leaves the duty roster.', body: 'The ship remains, but no living crew can command it.' }
+  if (campaign.hull <= 0) return { kicker: 'CAMPAIGN LOST // HULL FAILURE', heading: 'The ship came apart between decisions.', body: 'There was not enough hull left to carry the crew home.' }
+  return { kicker: 'CAMPAIGN LOST // FUEL EXHAUSTED', heading: 'The last jump emptied the tanks.', body: 'The ship and its surviving crew are stranded beyond the next signal.' }
 }
 
 function renderCampaignLost(): string {
   const loss = lossReason()
   const report = campaign.missionReport
-  return `<div class="campaign-panel campaign-loss">${campaignStrip(campaign)}<p class="kicker">${loss.kicker}</p><h2 id="campaign-heading" tabindex="-1">${loss.heading}</h2><p class="campaign-lede">${loss.body}</p>${report ? `<div class="campaign-report"><span>LAST MISSION<strong>${report.outcome.toUpperCase()}</strong></span><span>SALVAGE<strong>+${report.salvageGained}</strong></span><span>HULL DAMAGE<strong>-${report.hullDamage}</strong></span></div>` : ''}${campaignRoster(campaign.crew)}<div class="campaign-actions"><button data-campaign-action="restart-campaign">START A NEW RUN</button></div></div>`
+  return `<div class="campaign-panel campaign-loss">${campaignStrip(campaign)}<p class="kicker">${loss.kicker}</p><h2 id="campaign-heading" tabindex="-1">${loss.heading}</h2><p class="campaign-lede">${loss.body}</p>${report ? `<div class="campaign-report"><span>LAST MISSION<strong>${report.outcome.toUpperCase()}</strong></span><span>SALVAGE<strong>+${report.salvageGained}</strong></span><span>CREDITS<strong>+${report.creditsGained}</strong></span><span>HULL DAMAGE<strong>-${report.hullDamage}</strong></span></div>` : ''}${campaignRoster(campaign.crew)}<div class="campaign-actions"><button data-campaign-action="restart-campaign">START A NEW RUN</button></div></div>`
 }
 
 function renderCampaignScreen() {
-  campaignScreen.innerHTML = campaign.phase === 'encounter' ? renderEncounter() : campaign.phase === 'debrief' ? renderDebrief() : renderCampaignLost()
+  campaignScreen.innerHTML = campaign.phase === 'route'
+    ? renderRoute()
+    : campaign.phase === 'encounter'
+      ? renderEncounter()
+      : campaign.phase === 'debrief'
+        ? renderDebrief()
+        : renderCampaignLost()
   campaignScreen.querySelectorAll<HTMLButtonElement>('[data-campaign-action]').forEach(button => {
     button.onclick = () => handleCampaignAction(button.dataset.campaignAction!)
   })
   if (focusNextScreen) {
     focusNextScreen = false
+    focusNextAction = undefined
     queueMicrotask(() => campaignScreen.querySelector<HTMLElement>('#campaign-heading')?.focus())
+  } else if (focusNextAction) {
+    const action = focusNextAction
+    focusNextAction = undefined
+    queueMicrotask(() => {
+      const button = Array.from(campaignScreen.querySelectorAll<HTMLButtonElement>('[data-campaign-action]'))
+        .find(candidate => candidate.dataset.campaignAction === action && !candidate.disabled)
+      ;(button ?? campaignScreen.querySelector<HTMLElement>('#campaign-heading'))?.focus()
+    })
   }
 }
 
+function phaseTitle(): string {
+  if (campaign.phase === 'route') return 'Plot the next jump'
+  if (campaign.phase === 'encounter') return campaign.encounter?.name ?? 'Signal contact'
+  if (campaign.phase === 'debrief') return 'Mission consequences'
+  return 'Campaign ended'
+}
+
 function renderCampaignHud() {
-  const phaseTitle = campaign.phase === 'encounter' ? 'Command decision' : campaign.phase === 'debrief' ? 'Mission consequences' : 'Campaign ended'
   const report = campaign.missionReport
-  hud.innerHTML = `<div><p class="kicker">CAMPAIGN // ${campaign.phase.toUpperCase()}</p><h2>${phaseTitle}</h2><p>Jump ${campaign.jump} · ${campaign.fuel} fuel remaining</p></div><section><h3>Mobile base</h3><p><strong>Hull ${campaign.hull}/${campaign.maxHull}</strong><br>${campaign.salvage} salvage in cargo</p></section><section><h3>Persistent crew</h3>${campaignRoster(campaign.crew)}</section>${report ? `<section><h3>Last mission</h3><p>${report.outcome === 'victory' ? 'Ship secured' : 'Boarding failed'} · ${report.salvageGained} salvage · ${report.hullDamage} hull damage</p></section>` : ''}`
+  hud.innerHTML = `<div><p class="kicker">CAMPAIGN // ${campaign.phase.toUpperCase()}</p><h2>${phaseTitle()}</h2><p>Jump ${campaign.jump} · ${campaign.fuel}/${campaign.maxFuel} fuel</p></div><section><h3>Mobile base</h3><p><strong>Hull ${campaign.hull}/${campaign.maxHull}</strong><br>${campaign.credits} credits · ${campaign.salvage} salvage<br>Boarding rifles · ${campaign.weaponDamage} damage</p></section><section><h3>Persistent crew</h3>${campaignRoster(campaign.crew)}</section>${report ? `<section><h3>Last mission</h3><p>${report.outcome === 'victory' ? 'Objective complete' : 'Mission failed'} · ${report.salvageGained} salvage · ${report.creditsGained} credits · ${report.hullDamage} hull damage</p></section>` : ''}`
 }
 
 function updateTacticalHud(current: GameState) {
@@ -210,7 +375,10 @@ function updateTacticalHud(current: GameState) {
     const hp = unit?.hp ?? 0
     return `<button class="unit ${hp <= 0 ? 'dead' : ''}" data-unit="${record.id}" ${hp <= 0 ? 'disabled' : ''}><span>${record.name}<small>${record.role}</small></span><b>${hp > 0 ? `${hp}/${record.maxHp} HP · ${unit!.ap} AP` : 'KIA'}</b></button>`
   }).join('')
-  hud.innerHTML = `<div><p class="kicker">MISSION // ${current.status.toUpperCase()}</p><h2>${current.status === 'playing' ? current.objective : current.status === 'victory' ? 'Enemy ship secured' : 'All crew lost'}</h2><p>Jump ${campaign.jump} · Hull ${campaign.hull}/${campaign.maxHull} · Salvage ${campaign.salvage}</p></div><section><h3>Selected</h3><p>${selected ? `<strong>${selected.name}</strong><br>${selected.role} · ${selected.ap} AP · ${selected.hp}/${selected.maxHp} HP` : 'Enemy activity…'}</p></section><section><h3>Crew manifest</h3>${crewMarkup}</section><section><h3>Hostiles</h3>${hostileMarkup}</section><ol class="log">${current.log.map(entry => `<li>${entry}</li>`).join('')}</ol>`
+  const deadline = current.objective.kind === 'rescue'
+    ? `<section><h3>Deadline</h3><p class="deadline"><strong>TURN ${current.turn}/${current.objective.deadlineTurn}</strong><br>Reach ${current.objective.targetName} before enemy phase ${current.objective.deadlineTurn} ends.</p><p class="rescue-marker-legend">Survivor beacon</p></section>`
+    : ''
+  hud.innerHTML = `<div><p class="kicker">MISSION // ${current.status.toUpperCase()}</p><h2>${current.status === 'playing' ? current.objective.label : terminalTitle(current)}</h2><p>Jump ${campaign.jump} · Hull ${campaign.hull}/${campaign.maxHull} · ${campaign.weaponDamage} weapon damage</p></div>${deadline}<section><h3>Selected</h3><p>${selected ? `<strong>${selected.name}</strong><br>${selected.role} · ${selected.ap} AP · ${selected.hp}/${selected.maxHp} HP` : 'Enemy activity…'}</p></section><section><h3>Crew manifest</h3>${crewMarkup}</section><section><h3>Hostiles</h3>${hostileMarkup}</section><ol class="log">${current.log.map(entry => `<li>${entry}</li>`).join('')}</ol>`
   hud.querySelectorAll<HTMLButtonElement>('[data-unit]').forEach(button => button.onclick = () => {
     button.blur()
     controller.replace(selectUnit(state, button.dataset.unit!))
@@ -247,29 +415,40 @@ function lockTransition(action: () => void) {
   window.setTimeout(() => { transitionLocked = false }, 300)
 }
 
+function enterMission() {
+  const next = beginMission(campaign)
+  if (next === campaign) return
+  campaign = next
+  focusNextScreen = true
+  focusNextTactical = true
+  controller.replace(createGame(missionFor(campaign)))
+}
+
 function handleCampaignAction(action: string) {
   lockTransition(() => {
     const before = campaign
-    if (action === 'board') {
-      const next = beginBoarding(before)
-      if (next === before) return
-      campaign = next
-      focusNextScreen = true
-      focusNextTactical = true
-      controller.replace(createGame(boardingMissionFor(campaign)))
+    if (action.startsWith('route:')) campaign = chooseDestination(before, action.slice('route:'.length))
+    else if (action === 'resolve-encounter') campaign = resolveEncounter(before)
+    else if (action === 'continue-encounter') campaign = continueEncounter(before)
+    else if (action === 'decline-encounter') campaign = declineEncounter(before)
+    else if (action === 'leave-starbase') campaign = leaveStarbase(before)
+    else if (action === 'buy-fuel') campaign = buyFuel(before)
+    else if (action === 'sell-salvage') campaign = sellSalvage(before)
+    else if (action === 'buy-weapon') campaign = buyWeapon(before)
+    else if (action === 'hire-mercenary') campaign = hireMercenary(before)
+    else if (action === 'begin-mission') {
+      enterMission()
       return
-    }
-    if (action === 'scavenge') campaign = scavengeEncounter(before)
-    else if (action === 'repair') campaign = repairShip(before)
-    else if (action === 'jump') campaign = jumpAway(before)
-    else if (action === 'recover-crew') campaign = chooseRecovery(before, 'crew')
+    } else if (action === 'recover-crew') campaign = chooseRecovery(before, 'crew')
     else if (action === 'recover-hull') campaign = chooseRecovery(before, 'hull')
     else if (action === 'recover-bank') campaign = chooseRecovery(before, 'bank')
     else if (action === 'restart-campaign') {
       restartCampaign()
       return
     }
-    if (campaign !== before) focusNextScreen = true
+    const screenChanged = campaign.phase !== before.phase || campaign.encounter?.resolved !== before.encounter?.resolved
+    if (campaign !== before && screenChanged) focusNextScreen = true
+    else if (campaign !== before && ['buy-fuel', 'sell-salvage', 'buy-weapon', 'hire-mercenary'].includes(action)) focusNextAction = action
     renderApp()
   })
 }
@@ -277,7 +456,7 @@ function handleCampaignAction(action: string) {
 function finishMission() {
   if (campaign.phase !== 'mission' || state.status === 'playing') return
   controller.cancelPending()
-  const next = resolveBoarding(campaign, state)
+  const next = resolveMission(campaign, state)
   if (next === campaign) return
   campaign = next
   focusNextScreen = true
@@ -286,7 +465,7 @@ function finishMission() {
 
 function restartCampaign() {
   controller.cancelPending()
-  campaign = createCampaign()
+  campaign = createRun()
   focusNextScreen = true
   controller.replace(createGame(boardingMissionFor(campaign)))
 }
