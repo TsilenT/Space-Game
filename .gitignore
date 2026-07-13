@@ -5,6 +5,12 @@ coverage/
 build/
 export/
 
+# Local portable toolchain (not part of the repo)
+.tools/
+
+# Local agent tooling config (machine-specific, not a repo convention)
+.claude/
+
 # OS/editor
 .DS_Store
 Thumbs.db

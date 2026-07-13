@@ -10,6 +10,7 @@ export interface Cell extends Point {
   readonly room: string
   readonly walkable: boolean
   readonly opaque: boolean
+  readonly door?: boolean
 }
 
 export interface RoomDefinition {
@@ -52,6 +53,7 @@ interface TileDefinition {
   readonly room: string
   readonly walkable: boolean
   readonly opaque: boolean
+  readonly door?: boolean
 }
 
 interface MapDefinition {
@@ -96,6 +98,7 @@ export const roomAt = (map: TacticalMap, point: Point): string => cellAt(map, po
 
 const floor = (room: string): TileDefinition => ({ room, walkable: true, opaque: false })
 const wall: TileDefinition = { room: 'Hull', walkable: false, opaque: true }
+const closedDoor = (room: string): TileDefinition => ({ room, walkable: true, opaque: true, door: true })
 
 export const BOARDING_MISSION: TacticalMission = {
   id: 'hostile-boarding-action',
@@ -104,12 +107,12 @@ export const BOARDING_MISSION: TacticalMission = {
   map: defineTacticalMap({
     rows: [
       '#AAA#MM#CCC#',
-      '#AAAMMMMCCC#',
-      'AAAAMMMMCCCC',
+      '#AAADMMMCCC#',
+      'AAAA#MMMCCCC',
       'AAAA#MMMCCCC',
       'AAAARRR#WWWW',
-      'AAAARRRRWWWW',
-      '#AAARRRRWWW#',
+      'AAAARRRRHWWW',
+      '#AAARRR#WWW#',
       '#AAA#RR#WWW#',
     ],
     legend: {
@@ -119,6 +122,8 @@ export const BOARDING_MISSION: TacticalMission = {
       R: floor('Reactor'),
       C: floor('Bridge'),
       W: floor('Weapons'),
+      D: closedDoor('Medbay'),
+      H: closedDoor('Weapons'),
     },
     rooms: [
       { name: 'Boarding Bay', label: { x: 1, y: 7 } },
