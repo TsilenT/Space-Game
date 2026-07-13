@@ -32,6 +32,13 @@ This choice keeps a four-person prototype readable while creating reusable found
 - The same hand-authored contact repeats so persistence can be playtested without implying procedural content or a finished galaxy layer.
 - Defer cover, overwatch, inventory breadth, research trees, procedural generation, and broad campaign simulation until that compact loop is playable and useful for creative direction.
 
+### Closed doors — July 12, 2026
+
+- The first tactical system layered onto shared visibility is closed doors, chosen over cover, overwatch, and environmental hazards for this slice.
+- A closed door blocks sight and movement exactly like a wall. Any unit, crew or hostile, that moves onto a door cell forces it open at normal move AP cost; it stays open for the rest of the mission.
+- Enemies can open doors, matching crew capability. This trades the "seal a door behind you" isolation tactic for a more symmetric, X-COM-style breach moment where either side can be ambushed opening one.
+- Re-closing doors, a dedicated open action separate from moving, and any stealth/ambush bonus tied to doors remain deferred.
+
 ## Open creative questions
 
 1. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?
@@ -40,4 +47,4 @@ This choice keeps a four-person prototype readable while creating reusable found
 4. How lethal should the later full campaign be beyond the demo's current tuning?
 5. Should the tone lean serious, comedic, or deliberately mixed?
 6. Should later missions be hand-authored, procedurally generated, or hybrid?
-7. After the end-to-end demo loop is working, which tactical system should follow visibility: cover, overwatch, doors, or environmental hazards?
+7. Doors are now in; which tactical system should follow next: cover, overwatch, or environmental hazards?
