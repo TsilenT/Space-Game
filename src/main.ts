@@ -114,6 +114,7 @@ class TacticalScene extends Phaser.Scene {
     const graphics = this.add.graphics()
     const visible = new Set(currentVisibility(state).map(key))
     const explored = new Set(state.explored)
+    const openDoors = new Set(state.openDoors)
     const legalTargetIds = new Set(legalTargets(state).map(unit => unit.id))
     graphics.fillStyle(0x07101c, 1).fillRect(0, 0, 800, 600)
     for (let y = 0; y < state.map.height; y++) for (let x = 0; x < state.map.width; x++) {
@@ -122,6 +123,7 @@ class TacticalScene extends Phaser.Scene {
       const cell = cellAt(state.map, point)!
       const isExplored = explored.has(pointKey)
       const isVisible = visible.has(pointKey)
+      const isClosedDoor = cell.door && !openDoors.has(pointKey)
       const left = OX + x * CELL
       const top = OY + y * CELL
 
@@ -131,9 +133,10 @@ class TacticalScene extends Phaser.Scene {
         continue
       }
 
-      graphics.fillStyle(cell.walkable ? (ROOM_COLORS[cell.room] ?? 0x132b38) : 0x03070c, 1).fillRect(left, top, CELL - 2, CELL - 2)
+      graphics.fillStyle(!cell.walkable ? 0x03070c : isClosedDoor ? 0x4a3319 : (ROOM_COLORS[cell.room] ?? 0x132b38), 1).fillRect(left, top, CELL - 2, CELL - 2)
       graphics.lineStyle(1, isVisible ? 0x426277 : 0x263946, isVisible ? .45 : .25).strokeRect(left, top, CELL - 2, CELL - 2)
       if (!isVisible) graphics.fillStyle(0x02070c, .58).fillRect(left, top, CELL - 2, CELL - 2)
+      if (cell.door) graphics.fillStyle(isClosedDoor ? 0xf1bd5b : 0x63e3d6, isVisible ? .9 : .4).fillRect(left + CELL / 2 - 4, top + 6, 8, CELL - 14)
     }
     for (const point of legalMoves(state)) graphics.fillStyle(0x55d9d0, .24).fillRect(OX + point.x * CELL + 4, OY + point.y * CELL + 4, CELL - 10, CELL - 10)
     for (const system of state.map.systems.filter(marker => explored.has(key(marker)))) {

@@ -38,6 +38,13 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Recruited survivors and mercenaries join the persistent roster, capped at six living crew for this slice, and can deploy on later missions. KIA records remain visible without blocking a replacement.
 - Mission variety uses three validated, hand-authored layouts with seeded encounters. Unconstrained procedural ship generation is deferred until authored rooms and objectives establish useful generator constraints.
 
+### Closed doors — July 12, 2026
+
+- The first tactical system layered onto shared visibility is closed doors, chosen over cover, overwatch, and environmental hazards for this slice.
+- A closed door blocks sight and movement exactly like a wall. Any unit, crew or hostile, that moves onto a door cell forces it open at normal move AP cost; it stays open for the rest of the mission.
+- Enemies can open doors, matching crew capability. This trades the "seal a door behind you" isolation tactic for a more symmetric, X-COM-style breach moment where either side can be ambushed opening one.
+- Re-closing doors, a dedicated open action separate from moving, and any stealth/ambush bonus tied to doors remain deferred.
+
 ## Open creative questions
 
 1. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?
@@ -46,4 +53,4 @@ This choice keeps a four-person prototype readable while creating reusable found
 4. How lethal should the later full campaign be beyond the demo's current tuning?
 5. Should the tone lean serious, comedic, or deliberately mixed?
 6. When should the authored mission modules become a constrained procedural generator?
-7. After the end-to-end demo loop is working, which tactical system should follow visibility: cover, overwatch, doors, or environmental hazards?
+7. Doors are now in; which tactical system should follow next: cover, overwatch, or environmental hazards?

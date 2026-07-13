@@ -1,5 +1,6 @@
 import {
   BOARDING_MISSION,
+  cellAt,
   isWalkable,
   key,
   roomAt,
@@ -43,6 +44,7 @@ export interface GameState {
   turn: number
   selectedId?: string
   explored: CellKey[]
+  openDoors: CellKey[]
   log: string[]
 }
 
@@ -69,14 +71,21 @@ export function createGame(mission: TacticalMission = BOARDING_MISSION): GameSta
     turn: 1,
     selectedId: mission.units.find(unit => unit.team === 'crew')?.id,
     explored: [],
+    openDoors: [],
     log: [`Mission started. ${mission.objective.label}.`],
     units: mission.units.map(createUnit),
   }))
 }
 
+function activeMap(state: GameState): TacticalMap {
+  if (state.openDoors.length === 0) return state.map
+  const open = new Set(state.openDoors)
+  return { ...state.map, cells: state.map.cells.map(cell => cell.door && open.has(key(cell)) ? { ...cell, opaque: false } : cell) }
+}
+
 export function currentVisibility(state: GameState): Point[] {
   const observers = state.units.filter(unit => unit.team === 'crew' && alive(unit))
-  return cellsVisibleFrom(state.map, observers, state.visionRange)
+  return cellsVisibleFrom(activeMap(state), observers, state.visionRange)
 }
 
 export function isCellVisible(state: GameState, point: Point): boolean {
@@ -96,6 +105,10 @@ function reveal(state: GameState): GameState {
 
 function occupied(state: GameState, point: Point, ignore?: string): boolean {
   return state.units.some(unit => alive(unit) && unit.id !== ignore && unit.x === point.x && unit.y === point.y)
+}
+
+function isClosedDoor(state: GameState, point: Point): boolean {
+  return cellAt(state.map, point)?.door === true && !state.openDoors.includes(key(point))
 }
 
 function neighbors(map: TacticalMap, point: Point): Point[] {
@@ -131,8 +144,8 @@ export function legalMoves(state: GameState): Point[] {
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || !visible.has(neighborKey) || occupied(state, neighbor, unit.id)) continue
       seen.set(neighborKey, cost + 1)
-      queue.push(neighbor)
       moves.push(neighbor)
+      if (!isClosedDoor(state, neighbor)) queue.push(neighbor)
     }
   }
 
@@ -151,7 +164,7 @@ function shortestDistance(state: GameState, start: Point, end: Point, ignore?: s
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || !allowed.has(neighborKey) || occupied(state, neighbor, ignore)) continue
       seen.add(neighborKey)
-      queue.push([neighbor, cost + 1])
+      if (neighborKey === key(end) || !isClosedDoor(state, neighbor)) queue.push([neighbor, cost + 1])
     }
   }
 
@@ -164,10 +177,16 @@ export function move(state: GameState, x: number, y: number): GameState {
   if (!unit || !legalMoves(state).some(point => key(point) === key(target))) return state
 
   const cost = shortestDistance(state, unit, target, unit.id)
+  const doorCell = cellAt(state.map, target)
+  const opensDoor = doorCell?.door && !state.openDoors.includes(key(target))
   return reveal(evaluateMission({
     ...state,
     units: state.units.map(candidate => candidate.id === unit.id ? { ...candidate, x, y, ap: candidate.ap - cost } : candidate),
-    log: [`${unit.name} moved into ${roomAt(state.map, target)}.`, ...state.log].slice(0, 5),
+    openDoors: opensDoor ? [...state.openDoors, key(target)] : state.openDoors,
+    log: [
+      opensDoor ? `${unit.name} forces open the ${doorCell!.room} door.` : `${unit.name} moved into ${roomAt(state.map, target)}.`,
+      ...state.log,
+    ].slice(0, 5),
   }))
 }
 
@@ -218,7 +237,7 @@ function canHit(state: GameState, attacker: Unit, target: Unit): boolean {
     && alive(target)
     && attacker.team !== target.team
     && distance(attacker, target) <= ATTACK_RANGE
-    && hasLineOfSight(state.map, attacker, target)
+    && hasLineOfSight(activeMap(state), attacker, target)
 }
 
 export function legalTargets(state: GameState): Unit[] {
@@ -302,12 +321,15 @@ export function enemyTurn(input: GameState): GameState {
         .sort((a, b) => pathDistance(state, a, nearest, current.id) - pathDistance(state, b, nearest, current.id) || a.y - b.y || a.x - b.x)
       const destination = options[0]
       if (destination) {
+        const doorCell = cellAt(state.map, destination)
+        const opensDoor = doorCell?.door && !state.openDoors.includes(key(destination))
         state = {
           ...state,
           units: state.units.map(unit => unit.id === current.id ? { ...unit, ...destination } : unit),
+          openDoors: opensDoor ? [...state.openDoors, key(destination)] : state.openDoors,
         }
         if (wasVisible || isCellVisible(state, destination)) {
-          state = { ...state, log: [`${current.name} advances.`, ...state.log].slice(0, 5) }
+          state = { ...state, log: [opensDoor ? `${current.name} forces open the ${doorCell!.room} door.` : `${current.name} advances.`, ...state.log].slice(0, 5) }
         }
       }
     }
