@@ -13,7 +13,7 @@ npm install
 npm run dev
 ```
 
-Choose among a distress call, starbase, and abandoned moon on every jump. Seeded encounters can reveal survivors, salvage, fuel, pirates, traps, or stranger hazards; tactical missions use multiple authored layouts and include both elimination and an eight-turn rescue. Crew health and death, recruits, a weapon upgrade, hull damage, credits, salvage, and fuel persist across the route.
+Navigate a seeded galaxy map: 18 star systems in rings around the Galactic Core, each a distress call, starbase, or abandoned moon. You can see the mission type of every system connected to anywhere you have been, jumps only hold your ring or fall inward, and visited systems are gone for good. Seeded encounters can reveal survivors, salvage, fuel, pirates, traps, or stranger hazards; tactical missions use multiple authored layouts and include both elimination and an eight-turn rescue. Crew health and death, recruits, a weapon upgrade, hull damage, credits, salvage, and fuel persist across the run — reach the core to win.
 
 ## Technology
 
@@ -74,7 +74,7 @@ npm run build
 
 ## Current slice
 
-The current demo is a compact frontier route: spend fuel choosing among three signal types, resolve seeded strategic events or tactical missions, bring persistent wounds and recruits home, trade at a starbase, recover, and plot another jump. A small catalog of authored ship layouts provides controlled variety; procedural layout generation, deeper equipment, reaction fire, research, and broader sector simulation remain later milestones.
+The current demo is a compact galaxy run: spend fuel jumping system to system across a seeded ring map, resolve seeded strategic events or tactical missions, bring persistent wounds and recruits home, trade at a starbase, recover, and push inward until the Galactic Core ends the run in victory. A small catalog of authored ship layouts provides controlled variety; the authored final battle at the core, procedural layout generation, deeper equipment, reaction fire, research, and broader sector simulation remain later milestones.
 
 ## License
 

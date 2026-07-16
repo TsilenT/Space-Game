@@ -22,12 +22,13 @@ import {
   type CampaignCrew,
   type CampaignEncounter,
   type CampaignState,
-  type DestinationKind,
   type DestinationOffer,
   type DistressEncounter,
   type MoonEncounter,
   type StarbaseEncounter,
+  type SystemKind,
 } from './sim/campaign'
+import { revealedSystemIds, systemById, type StarSystem } from './sim/galaxy'
 import { attack, createGame, currentVisibility, type GameState, legalMoves, legalTargets, move, selectUnit } from './sim/game'
 import { cellAt, isWalkable, key } from './sim/map'
 import { TurnController } from './turnController'
@@ -201,7 +202,7 @@ function campaignRoster(crew: readonly CampaignCrew[]): string {
   }).join('')}</div>`
 }
 
-const ROUTE_COPY: Readonly<Record<DestinationKind, { signal: string; heading: string; body: string; likely: string; danger: string }>> = {
+const ROUTE_COPY: Readonly<Record<SystemKind, { signal: string; heading: string; body: string; likely: string; danger: string }>> = {
   distress: {
     signal: 'CREW // HIGH RISK',
     heading: 'Answer the call',
@@ -223,6 +224,13 @@ const ROUTE_COPY: Readonly<Record<DestinationKind, { signal: string; heading: st
     likely: 'Likely: salvage',
     danger: 'Danger: uncertain',
   },
+  core: {
+    signal: 'CORE // FINAL APPROACH',
+    heading: 'Enter the core',
+    body: 'Every route ends here. Whatever holds the center of the galaxy is waiting for you.',
+    likely: 'Likely: the end',
+    danger: 'Danger: absolute',
+  },
 }
 
 function routeCard(offer: DestinationOffer): string {
@@ -230,8 +238,73 @@ function routeCard(offer: DestinationOffer): string {
   return `<article class="route-card ${offer.kind}"><p class="route-signal">${copy.signal}</p><h3>${offer.name}</h3><p><strong>${copy.heading}</strong></p><p>${copy.body}</p><p class="route-likelihood"><span>${copy.likely}</span><span>${copy.danger}</span></p><button data-campaign-action="route:${offer.id}">JUMP TO ${offer.name.toUpperCase()} · 1 FUEL</button></article>`
 }
 
+const MAP_SIZE = 560
+const RING_SPACING = 74
+
+function systemPosition(system: StarSystem): { x: number; y: number } {
+  return {
+    x: MAP_SIZE / 2 + Math.cos(system.angle) * system.ring * RING_SPACING,
+    y: MAP_SIZE / 2 + Math.sin(system.angle) * system.ring * RING_SPACING,
+  }
+}
+
+function galaxyMapSvg(current: CampaignState): string {
+  const galaxy = current.galaxy
+  const visited = new Set(current.visitedSystemIds)
+  const reachable = new Set(current.offers.map(offer => offer.id))
+  const revealed = revealedSystemIds(galaxy, current.visitedSystemIds)
+
+  const lanes: string[] = []
+  const drawn = new Set<string>()
+  for (const system of galaxy.systems) {
+    for (const neighborId of galaxy.adjacency[system.id] ?? []) {
+      const laneKey = system.id < neighborId ? `${system.id}|${neighborId}` : `${neighborId}|${system.id}`
+      if (drawn.has(laneKey)) continue
+      drawn.add(laneKey)
+      const from = systemPosition(system)
+      const to = systemPosition(systemById(galaxy, neighborId))
+      const open = (system.id === current.currentSystemId && reachable.has(neighborId))
+        || (neighborId === current.currentSystemId && reachable.has(system.id))
+      lanes.push(`<line class="lane ${open ? 'lane-open' : ''}" x1="${from.x.toFixed(1)}" y1="${from.y.toFixed(1)}" x2="${to.x.toFixed(1)}" y2="${to.y.toFixed(1)}"/>`)
+    }
+  }
+
+  const nodes = galaxy.systems.map(system => {
+    const { x, y } = systemPosition(system)
+    const isCurrent = system.id === current.currentSystemId
+    const stateClass = isCurrent
+      ? 'sys-current'
+      : reachable.has(system.id)
+        ? 'sys-open'
+        : visited.has(system.id)
+          ? 'sys-visited'
+          : revealed.has(system.id)
+            ? 'sys-revealed'
+            : 'sys-uncharted'
+    const kindClass = revealed.has(system.id) || isCurrent ? `kind-${system.kind}` : ''
+    const radius = system.kind === 'core' ? 14 : isCurrent || reachable.has(system.id) ? 11 : 8
+    const action = reachable.has(system.id) ? ` data-campaign-action="route:${system.id}"` : ''
+    const title = revealed.has(system.id)
+      ? `${system.name} — ${system.kind === 'core' ? 'galactic core' : system.kind.replace('-', ' ')}${visited.has(system.id) ? ' (visited)' : reachable.has(system.id) ? ' (in jump range)' : ''}`
+      : 'Uncharted system'
+    const label = isCurrent || system.kind === 'core' || reachable.has(system.id)
+      ? `<text class="sys-label ${isCurrent ? 'label-current' : ''}" x="${x.toFixed(1)}" y="${(y + radius + 13).toFixed(1)}">${system.name.toUpperCase()}</text>`
+      : ''
+    return `<g class="sys ${stateClass} ${kindClass}"${action}><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${radius}"/><title>${title}</title>${label}</g>`
+  })
+
+  return `<svg class="galaxy-map" viewBox="-20 -20 ${MAP_SIZE + 40} ${MAP_SIZE + 40}" role="img" aria-label="Galaxy map. ${current.visitedSystemIds.length} of ${galaxy.systems.length} systems visited. Jump options are listed as buttons below the map.">${lanes.join('')}${nodes.join('')}</svg>`
+}
+
 function renderRoute(): string {
-  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">NAVIGATION // JUMP ROUTE</p><h2 id="campaign-heading" tabindex="-1">Three signals. Fuel for one.</h2><p class="campaign-lede">Every jump costs 1 fuel. Signal profiles predict the kind of opportunity—not what waits there. The roll resolves once when you arrive. Run seed: ${campaign.seed}.</p><div class="route-grid">${campaign.offers.map(routeCard).join('')}</div></div>`
+  const here = systemById(campaign.galaxy, campaign.currentSystemId)
+  const count = campaign.offers.length
+  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">NAVIGATION // GALAXY MAP</p><h2 id="campaign-heading" tabindex="-1">${count === 1 ? 'One reachable signal.' : `${count} reachable signals.`} Fuel for one.</h2><p class="campaign-lede">Holding at ${here.name}. Every jump costs 1 fuel and burns the route behind you: the ship can hold its ring or fall inward toward the core, never climb back out. Reach the Galactic Core. Run seed: ${campaign.seed}.</p><div class="galaxy-frame">${galaxyMapSvg(campaign)}<div class="galaxy-legend"><span class="legend-current">Current</span><span class="legend-open">In range</span><span class="legend-revealed">Charted</span><span class="legend-visited">Visited</span><span class="legend-uncharted">Uncharted</span></div></div><div class="route-grid">${campaign.offers.map(routeCard).join('')}</div></div>`
+}
+
+function renderCampaignVictory(): string {
+  const living = campaign.crew.filter(crew => crew.hp > 0).length
+  return `<div class="campaign-panel campaign-victory">${campaignStrip(campaign)}<p class="kicker">CAMPAIGN VICTORY // GALACTIC CORE</p><h2 id="campaign-heading" tabindex="-1">The core opens before you.</h2><p class="campaign-lede">${systemById(campaign.galaxy, campaign.currentSystemId).name} swallows every signal you followed to reach it. The ship holds. The crew is watching. Whatever waits at the heart of the galaxy, you have arrived to meet it — the final battle itself lands in a future build.</p><div class="campaign-report"><span>JUMPS<strong>${campaign.jump}</strong></span><span>SYSTEMS VISITED<strong>${campaign.visitedSystemIds.length}/${campaign.galaxy.systems.length}</strong></span><span>CREW ALIVE<strong>${living}/${campaign.crew.length}</strong></span><span>HULL<strong>${campaign.hull}/${campaign.maxHull}</strong></span></div>${campaignRoster(campaign.crew)}<div class="campaign-actions"><button data-campaign-action="restart-campaign">START A NEW RUN</button></div></div>`
 }
 
 function moonResult(encounter: MoonEncounter): { kicker: string; heading: string; body: string; deltas: string[] } {
@@ -331,7 +404,9 @@ function renderCampaignScreen() {
       ? renderEncounter()
       : campaign.phase === 'debrief'
         ? renderDebrief()
-        : renderCampaignLost()
+        : campaign.phase === 'victory'
+          ? renderCampaignVictory()
+          : renderCampaignLost()
   campaignScreen.querySelectorAll<HTMLButtonElement>('[data-campaign-action]').forEach(button => {
     button.onclick = () => handleCampaignAction(button.dataset.campaignAction!)
   })
@@ -354,6 +429,7 @@ function phaseTitle(): string {
   if (campaign.phase === 'route') return 'Plot the next jump'
   if (campaign.phase === 'encounter') return campaign.encounter?.name ?? 'Signal contact'
   if (campaign.phase === 'debrief') return 'Mission consequences'
+  if (campaign.phase === 'victory') return 'Galactic core reached'
   return 'Campaign ended'
 }
 

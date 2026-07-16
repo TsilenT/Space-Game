@@ -22,13 +22,18 @@ import {
   type MoonOutcome,
   type StarbaseEncounter,
 } from './campaign'
+import { jumpTargets, systemById } from './galaxy'
 import { createGame, type GameState, type MissionResolution } from './game'
 import { BOARDING_MISSION, CIVILIAN_RESCUE_MISSION, DISTRESS_TRAP_MISSION, PIRATE_RESCUE_MISSION } from './map'
 
-function arrive(seed: number, kind: DestinationKind, changes: Partial<CampaignState> = {}): CampaignState {
-  const route = { ...createCampaign(seed), ...changes }
-  const offer = route.offers.find(candidate => candidate.kind === kind)!
-  return chooseDestination(route, offer.id)
+// Encounters roll off a system's eventSeed, fixed at galaxy generation. To pin
+// outcomes without hunting whole galaxies, arrive() rides a crafted offer on
+// top of a real adjacent system.
+function arrive(eventSeed: number, kind: DestinationKind, changes: Partial<CampaignState> = {}): CampaignState {
+  const route = { ...createCampaign(), ...changes }
+  const target = route.offers[0]
+  const offer = { id: target.id, kind, name: target.name, eventSeed }
+  return chooseDestination({ ...route, offers: [offer] }, offer.id)
 }
 
 function completedMission(
@@ -57,14 +62,14 @@ function encounter<T extends CampaignEncounter>(state: CampaignState, kind: T['k
   return state.encounter as T
 }
 
-describe('seeded route generation', () => {
-  it('is deterministic and always offers exactly one of each destination', () => {
+describe('galaxy navigation', () => {
+  it('is deterministic and starts on the rim with every adjacent system offered', () => {
     const first = createCampaign(42)
     const repeated = createCampaign(42)
     const different = createCampaign(43)
 
     expect(first).toEqual(repeated)
-    expect(first.offers).not.toEqual(different.offers)
+    expect(first.galaxy).not.toEqual(different.galaxy)
     expect(first).toMatchObject({
       phase: 'route',
       jump: 1,
@@ -74,39 +79,73 @@ describe('seeded route generation', () => {
       salvage: 1,
       hull: 75,
       weaponDamage: 3,
+      currentSystemId: first.galaxy.startId,
+      visitedSystemIds: [first.galaxy.startId],
     })
-    expect(first.offers.map(offer => offer.kind).sort()).toEqual(['abandoned-moon', 'distress', 'starbase'])
-    expect(new Set(first.offers.map(offer => offer.id))).toHaveLength(3)
+    expect(first.offers.map(offer => offer.id)).toEqual(
+      jumpTargets(first.galaxy, first.galaxy.startId, [first.galaxy.startId]).map(system => system.id),
+    )
+    expect(first.offers.length).toBeGreaterThan(0)
   })
 
-  it('uses the showcase seed for a stocked market, moon salvage, and timed rescue', () => {
-    expect(encounter<StarbaseEncounter>(arrive(37, 'starbase'), 'starbase')).toMatchObject({
+  it('spends fuel once, moves the ship, and burns the route behind it', () => {
+    const route = createCampaign(37)
+    const offer = route.offers[0]
+    const arrived = chooseDestination(route, offer.id)
+
+    expect(arrived).toMatchObject({
+      phase: 'encounter',
+      fuel: 3,
+      offers: [],
+      currentSystemId: offer.id,
+      visitedSystemIds: [route.galaxy.startId, offer.id],
+    })
+    expect(arrived.encounter?.kind).toBe(offer.kind)
+    expect(chooseDestination(arrived, offer.id)).toBe(arrived)
+    expect(chooseDestination(route, 'missing-offer')).toBe(route)
+
+    const back = declineEncounter(arrived)
+    expect(back.phase).toBe('route')
+    expect(back.offers.length).toBeGreaterThan(0)
+    for (const nextOffer of back.offers) {
+      expect(back.visitedSystemIds).not.toContain(nextOffer.id)
+    }
+  })
+
+  it('wins the campaign on arrival at the galactic core', () => {
+    const route = createCampaign(37)
+    const gateId = route.galaxy.adjacency[route.galaxy.coreId][0]
+    const core = systemById(route.galaxy, route.galaxy.coreId)
+    const staged: CampaignState = {
+      ...route,
+      currentSystemId: gateId,
+      visitedSystemIds: [route.galaxy.startId, gateId],
+      offers: [{ id: core.id, kind: core.kind, name: core.name, eventSeed: core.eventSeed }],
+    }
+    const won = chooseDestination(staged, core.id)
+    expect(won).toMatchObject({ phase: 'victory', fuel: 3, currentSystemId: core.id })
+    expect(won.encounter).toBeUndefined()
+    expect(won.visitedSystemIds).toContain(core.id)
+    expect(chooseDestination(won, core.id)).toBe(won)
+  })
+
+  it('keeps encounter kinds deterministic for a fixed event seed', () => {
+    expect(encounter<StarbaseEncounter>(arrive(11, 'starbase'), 'starbase')).toMatchObject({
       fuelStock: 2,
       weaponAvailable: true,
     })
-    expect(encounter<StarbaseEncounter>(arrive(37, 'starbase'), 'starbase').mercenary).toBeDefined()
-    expect(encounter(arrive(37, 'abandoned-moon'), 'abandoned-moon')).toMatchObject({ outcome: 'salvage' })
-    expect(encounter(arrive(37, 'distress'), 'distress')).toMatchObject({ outcome: 'rescue' })
-  })
-
-  it('spends fuel exactly once and persists the rolled encounter', () => {
-    const route = createCampaign(37)
-    const offer = route.offers.find(candidate => candidate.kind === 'distress')!
-    const arrived = chooseDestination(route, offer.id)
-
-    expect(arrived).toMatchObject({ phase: 'encounter', fuel: 3, offers: [] })
-    expect(arrived.encounter).toEqual(encounter(arrive(37, 'distress'), 'distress'))
-    expect(chooseDestination(arrived, offer.id)).toBe(arrived)
-    expect(chooseDestination(route, 'missing-offer')).toBe(route)
+    expect(encounter<StarbaseEncounter>(arrive(11, 'starbase'), 'starbase').mercenary).toBeDefined()
+    expect(encounter(arrive(1, 'abandoned-moon'), 'abandoned-moon')).toMatchObject({ outcome: 'salvage' })
+    expect(encounter(arrive(811, 'distress'), 'distress')).toMatchObject({ outcome: 'rescue' })
   })
 })
 
 describe('abandoned moon and direct distress outcomes', () => {
   const moonSeeds: Readonly<Record<MoonOutcome, number>> = {
-    salvage: 9,
-    survivor: 1,
-    amoeba: 5,
-    fuel: 8,
+    salvage: 1,
+    survivor: 1069,
+    amoeba: 1507,
+    fuel: 1843,
   }
 
   it('reaches every weighted moon outcome from stable seeds', () => {
@@ -125,7 +164,7 @@ describe('abandoned moon and direct distress outcomes', () => {
 
     const next = continueEncounter(resolved)
     expect(next).toMatchObject({ phase: 'route', jump: 2, fuel: 3, salvage: 4 })
-    expect(next.offers).toHaveLength(3)
+    expect(next.offers.length).toBeGreaterThan(0)
     expect(continueEncounter(next)).toBe(next)
   })
 
@@ -134,7 +173,7 @@ describe('abandoned moon and direct distress outcomes', () => {
     const repeated = resolveEncounter(arrive(moonSeeds.survivor, 'abandoned-moon'))
     expect(first.crew).toHaveLength(5)
     expect(first.crew[4]).toEqual(repeated.crew[4])
-    expect(first.crew[4].id).toContain('survivor-jump-1-abandoned-moon')
+    expect(first.crew[4].id).toContain('survivor-sys-')
 
     const base = arrive(moonSeeds.survivor, 'abandoned-moon')
     const full = {
@@ -154,7 +193,7 @@ describe('abandoned moon and direct distress outcomes', () => {
     const replacement = resolveEncounter(memorialAndFiveLiving)
     expect(replacement.crew).toHaveLength(CAMPAIGN_TUNING.rosterCap + 1)
     expect(replacement.crew.filter(crew => crew.hp > 0)).toHaveLength(CAMPAIGN_TUNING.rosterCap)
-    expect(replacement.crew.at(-1)?.id).toContain('survivor-jump-1-abandoned-moon')
+    expect(replacement.crew.at(-1)?.id).toContain('survivor-sys-')
   })
 
   it('lets a rare fuel cache save a final-fuel arrival', () => {
@@ -180,7 +219,7 @@ describe('abandoned moon and direct distress outcomes', () => {
   })
 
   it('can take or decline a survivor found at a direct distress call', () => {
-    const arrived = arrive(8, 'distress')
+    const arrived = arrive(1, 'distress')
     const rescued = resolveEncounter(arrived)
     expect(encounter<DistressEncounter>(arrived, 'distress').outcome).toBe('survivor')
     expect(rescued.crew).toHaveLength(5)
@@ -194,7 +233,7 @@ describe('abandoned moon and direct distress outcomes', () => {
 
 describe('starbase market and final-fuel arrival', () => {
   it('buys stocked fuel within stock, credit, and tank limits', () => {
-    const arrived = arrive(1, 'starbase')
+    const arrived = arrive(11, 'starbase')
     const station = encounter<StarbaseEncounter>(arrived, 'starbase')
     expect(station.fuelStock).toBeGreaterThan(0)
 
@@ -208,7 +247,7 @@ describe('starbase market and final-fuel arrival', () => {
   })
 
   it('lets a stocked starbase save the ship after spending its final fuel', () => {
-    const arrived = arrive(1, 'starbase', { fuel: 1 })
+    const arrived = arrive(11, 'starbase', { fuel: 1 })
     expect(arrived.fuel).toBe(0)
     const refueled = buyFuel(arrived)
     expect(refueled).toMatchObject({ phase: 'encounter', fuel: 1, credits: 8 })
@@ -216,14 +255,14 @@ describe('starbase market and final-fuel arrival', () => {
   })
 
   it('cannot refuel at the rare dry station and is stranded if it leaves at zero fuel', () => {
-    const arrived = arrive(6, 'starbase', { fuel: 1 })
+    const arrived = arrive(1714, 'starbase', { fuel: 1 })
     expect(encounter<StarbaseEncounter>(arrived, 'starbase').fuelStock).toBe(0)
     expect(buyFuel(arrived)).toBe(arrived)
     expect(leaveStarbase(arrived)).toMatchObject({ phase: 'lost', fuel: 0 })
   })
 
   it('sells salvage, buys one mediocre weapon, and carries its damage into missions', () => {
-    let state = arrive(1, 'starbase')
+    let state = arrive(11, 'starbase')
     expect(encounter<StarbaseEncounter>(state, 'starbase').weaponAvailable).toBe(true)
     state = sellSalvage(state)
     expect(state).toMatchObject({ salvage: 0, credits: 12 })
@@ -233,12 +272,12 @@ describe('starbase market and final-fuel arrival', () => {
     expect(state).toMatchObject({ credits: 6, weaponDamage: 4 })
     expect(buyWeapon(state)).toBe(state)
 
-    const tacticalState = beginMission({ ...arrive(1, 'distress'), weaponDamage: state.weaponDamage })
+    const tacticalState = beginMission({ ...arrive(36, 'distress'), weaponDamage: state.weaponDamage })
     expect(missionFor(tacticalState).crewDamage).toBe(4)
   })
 
   it('hires the seeded mercenary once and respects credits and roster capacity', () => {
-    const arrived = arrive(1, 'starbase')
+    const arrived = arrive(11, 'starbase')
     const station = encounter<StarbaseEncounter>(arrived, 'starbase')
     expect(station.mercenary).toBeDefined()
     const hired = hireMercenary(arrived)
@@ -271,9 +310,9 @@ describe('starbase market and final-fuel arrival', () => {
 
 describe('contextual tactical missions', () => {
   const missionSeeds = {
-    pirates: 1,
-    rescue: 3,
-    trap: 6,
+    pirates: 36,
+    rescue: 811,
+    trap: 1456,
   } as const
 
   it('maps all three tactical distress outcomes to their authored templates', () => {
@@ -373,7 +412,7 @@ describe('contextual tactical missions', () => {
     expect(resolveMission(mission, active)).toBe(mission)
     expect(resolveMission(mission, createGame(BOARDING_MISSION))).toBe(mission)
     expect(beginMission(mission)).toBe(mission)
-    const directSurvivor = arrive(8, 'distress')
+    const directSurvivor = arrive(1, 'distress')
     expect(beginMission(directSurvivor)).toBe(directSurvivor)
     expect(() => missionFor(createCampaign())).toThrow('no active tactical mission')
   })

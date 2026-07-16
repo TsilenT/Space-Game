@@ -525,6 +525,157 @@ button.sold-out {
   color: var(--red);
 }
 
+.campaign-victory {
+  padding: clamp(18px, 4vw, 30px);
+  border: 1px solid rgb(99 227 214 / 55%);
+  border-top: 3px solid var(--cyan);
+  background: linear-gradient(145deg, rgb(99 227 214 / 11%), #091018 70%);
+}
+
+.campaign-victory .kicker,
+.campaign-victory h2 {
+  color: var(--cyan);
+}
+
+.galaxy-frame {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: clamp(14px, 3vw, 26px);
+  border: 1px solid var(--line);
+  background: radial-gradient(circle at 50% 45%, #0c1d2c 0, #060d15 68%);
+}
+
+.galaxy-map {
+  display: block;
+  width: 100%;
+  max-width: 620px;
+  height: auto;
+}
+
+.galaxy-map .lane {
+  stroke: #1c2f40;
+  stroke-width: 1.2;
+}
+
+.galaxy-map .lane-open {
+  stroke: var(--cyan);
+  stroke-width: 2;
+  opacity: .85;
+}
+
+.galaxy-map .sys circle {
+  fill: #0b1622;
+  stroke: #22384a;
+  stroke-width: 1.5;
+}
+
+.galaxy-map .kind-distress { --sys-color: var(--red); }
+.galaxy-map .kind-starbase { --sys-color: var(--cyan); }
+.galaxy-map .kind-abandoned-moon { --sys-color: var(--gold); }
+.galaxy-map .kind-core { --sys-color: #eaf6ff; }
+
+.galaxy-map .sys-revealed circle {
+  fill: var(--sys-color, #33506a);
+  fill-opacity: .4;
+  stroke: #33506a;
+}
+
+.galaxy-map .sys-visited circle {
+  fill: #16242f;
+  stroke: #2c4256;
+}
+
+.galaxy-map .sys-open {
+  cursor: pointer;
+}
+
+.galaxy-map .sys-open circle {
+  fill: var(--sys-color, var(--cyan));
+  stroke: #eaf6ff;
+  stroke-width: 2;
+}
+
+.galaxy-map .sys-open:hover circle {
+  stroke-width: 3.5;
+  filter: brightness(1.18);
+}
+
+.galaxy-map .sys-current circle {
+  fill: var(--sys-color, #eaf6ff);
+  stroke: #fff;
+  stroke-width: 3;
+}
+
+.galaxy-map .sys-label {
+  fill: var(--muted);
+  font: 700 11px 'Space Mono', monospace;
+  letter-spacing: .06em;
+  text-anchor: middle;
+}
+
+.galaxy-map .label-current {
+  fill: #eaf6ff;
+}
+
+.galaxy-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 18px;
+  color: var(--muted);
+  font: 700 .62rem/1.4 'Space Mono', monospace;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.galaxy-legend span::before {
+  content: '';
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: -1px;
+  border: 1.5px solid #22384a;
+  background: #0b1622;
+}
+
+.galaxy-legend .legend-current::before {
+  border-color: #fff;
+  background: var(--cyan);
+}
+
+.galaxy-legend .legend-open::before {
+  border-color: #eaf6ff;
+  background: var(--gold);
+}
+
+.galaxy-legend .legend-revealed::before {
+  border-color: #33506a;
+  background: rgb(241 189 91 / 40%);
+}
+
+.galaxy-legend .legend-visited::before {
+  border-color: #2c4256;
+  background: #16242f;
+}
+
+.route-card.core {
+  border-top-color: #eaf6ff;
+  background: linear-gradient(160deg, rgb(234 246 255 / 10%), #091722 45%);
+}
+
+.core .route-signal {
+  color: #eaf6ff !important;
+}
+
+.route-card.core button {
+  border-color: #eaf6ff;
+  background: #eaf6ff;
+}
+
 @media (max-width: 900px) {
   .play {
     display: block;
