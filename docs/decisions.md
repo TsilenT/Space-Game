@@ -54,6 +54,15 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Reaching the Galactic Core wins the run with a victory screen. The authored final battle at the core is deliberately deferred to a later slice.
 - The navigation screen renders the galaxy as a clickable SVG map with the reachable systems repeated as accessible route cards; visited systems stay dimmed as a route history.
 
+### Fire modes, accuracy, and cover — July 16, 2026
+
+- Every armed unit fires in one of three X-COM-style modes from a 12-time-unit turn pool (movement costs 3 TU per tile): snap shot (4 TU, one round, 0.85 accuracy factor), auto shot (8 TU, three separately rolled rounds, 0.60 factor), aimed shot (10 TU, one round, 1.15 factor).
+- Hit chance = soldier accuracy × mode factor, minus 3% per tile of distance beyond the first, minus 20% when a cover crate shields the target on its shooter-facing side, clamped to 5–95%. The maximum firing range is 8 tiles.
+- Crates are a new map tile: they block movement but not sight, and grant the cover penalty. Each authored map carries a few.
+- Shots resolve against a deterministic seeded RNG carried in the mission state, so a run remains reproducible from its campaign seed.
+- Soldiers improve by shooting: each landed hit banks +2 accuracy at mission end, capped at +8 per mission and a 90 accuracy ceiling; the dead train nothing. Starting crew accuracy is role-flavored (Marine 55, Scout 60, Engineer/Medic 45); recruits roll 40–60 seeded.
+- Enemies fire the same accuracy-rolled snap shots, so cover protects crew symmetrically, and they never fire from beyond vision range — any shooter that can hit a crew member is visible to that crew member in return. Crew may still take squad-sight shots at targets spotted by a teammate. Enemy fire modes beyond snap, ammunition, and reaction fire remain deferred.
+
 ## Open creative questions
 
 1. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?
@@ -62,5 +71,5 @@ This choice keeps a four-person prototype readable while creating reusable found
 4. How lethal should the later full campaign be beyond the demo's current tuning?
 5. Should the tone lean serious, comedic, or deliberately mixed?
 6. When should the authored mission modules become a constrained procedural generator?
-7. Doors are now in; which tactical system should follow next: cover, overwatch, or environmental hazards?
+7. Doors, fire modes, and cover are now in; which tactical system should follow next: overwatch/reaction fire, ammunition, or environmental hazards?
 8. What is the authored final battle at the Galactic Core, and what makes it mechanically distinct from a standard boarding?

@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { attack, createGame, currentVisibility, enemyTurn, endTurn, legalMoves, legalTargets, move, selectUnit } from './game'
+import { FIRE_MODES, TURN_TIME_UNITS, attack, createGame, currentVisibility, enemyTurn, endTurn, hitChance, legalMoves, legalTargets, move, selectUnit, type Unit } from './game'
 import { defineTacticalMap, key, type TacticalMission } from './map'
+
+// Hunted LCG states: the next roll(s) from these values land where each name says.
+const RNG_SURE_HIT = 1972 // 0.0
+const RNG_SURE_MISS = 1868 // 96.0, above the 95% chance cap
+const RNG_TRIPLE_HIT = 8 // 23.9, 0.4, 29.7
+const RNG_HIT_THEN_MISS = 30 // 24.8, 100.0
+
+const unit = (game: ReturnType<typeof createGame>, id: string): Unit =>
+  game.units.find(candidate => candidate.id === id)!
 
 describe('deterministic tactical simulation', () => {
   it('starts with four crew, three enemies and player phase', () => {
@@ -12,11 +21,11 @@ describe('deterministic tactical simulation', () => {
     expect(game.map.rooms).toHaveLength(5)
     expect(game.map.systems).toHaveLength(4)
   })
-  it('moves only to reachable walkable unoccupied cells and spends AP', () => {
+  it('moves only to reachable walkable unoccupied cells and spends time units', () => {
     let game = selectUnit(createGame(), 'soren')
     expect(legalMoves(game)).toContainEqual({ x: 3, y: 6 })
     game = move(game, 3, 6)
-    expect(game.units.find(u => u.id === 'soren')).toMatchObject({ x: 3, y: 6, ap: 3 })
+    expect(unit(game, 'soren')).toMatchObject({ x: 3, y: 6, ap: TURN_TIME_UNITS - 3 })
     expect(move(game, 0, 0)).toBe(game)
   })
   it('rejects enemy selection and out-of-range attacks', () => {
@@ -24,20 +33,20 @@ describe('deterministic tactical simulation', () => {
     expect(selectUnit(game, 'wraith-1')).toBe(game)
     expect(attack(game, 'wraith-1')).toBe(game)
   })
-  it('deals deterministic damage, spends AP, and removes dead units from play', () => {
+  it('deals damage on a sure hit, spends time units, and removes dead units from play', () => {
     const base = createGame()
     const units = base.units.map(u => u.id === 'ada' ? { ...u, x: 5, y: 2 } : u.id === 'wraith-1' ? { ...u, hp: 3 } : u)
-    const game = attack({ ...base, units, selectedId: 'ada' }, 'wraith-1')
-    expect(game.units.find(u => u.id === 'wraith-1')?.hp).toBe(0)
-    expect(game.units.find(u => u.id === 'ada')?.ap).toBe(2)
+    const game = attack({ ...base, units, selectedId: 'ada', rngState: RNG_SURE_HIT }, 'wraith-1')
+    expect(unit(game, 'wraith-1').hp).toBe(0)
+    expect(unit(game, 'ada')).toMatchObject({ ap: TURN_TIME_UNITS - FIRE_MODES.snap.cost, hits: 1 })
   })
-  it('enemy phase is deterministic and returns control with refreshed AP', () => {
+  it('enemy phase is deterministic and returns control with refreshed time units', () => {
     const ended = endTurn(createGame())
     expect(ended.phase).toBe('enemy')
     const next = enemyTurn(ended)
     expect(next.phase).toBe('player')
     expect(next.turn).toBe(2)
-    expect(next.units.filter(u => u.team === 'crew').every(u => u.ap === 4)).toBe(true)
+    expect(next.units.filter(u => u.team === 'crew').every(u => u.ap === TURN_TIME_UNITS)).toBe(true)
   })
   it('rejects enemy-turn simulation outside the enemy phase', () => {
     const game = createGame()
@@ -47,6 +56,124 @@ describe('deterministic tactical simulation', () => {
     const base = createGame()
     expect(enemyTurn({ ...base, phase: 'enemy', units: base.units.map(u => u.team === 'enemy' ? { ...u, hp: 0 } : u) }).status).toBe('victory')
     expect(enemyTurn({ ...base, phase: 'enemy', units: base.units.map(u => u.team === 'crew' ? { ...u, hp: 0 } : u) }).status).toBe('defeat')
+  })
+})
+
+const rangeLegend = {
+  '.': { room: 'Deck', walkable: true, opaque: false },
+  '#': { room: 'Hull', walkable: false, opaque: true },
+  o: { room: 'Deck', walkable: false, opaque: false, cover: true },
+}
+
+function fireMission(): TacticalMission {
+  return {
+    id: 'fire-test',
+    objective: { kind: 'eliminate', label: 'Test fire modes' },
+    visionRange: 8,
+    map: defineTacticalMap({ rows: ['..........', '..........', '..........'], legend: rangeLegend }),
+    crewSpawns: [{ x: 0, y: 1 }],
+    units: [
+      { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 1, hp: 8, ap: 12, accuracy: 70 },
+      { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 4, y: 1, hp: 12, ap: 12, accuracy: 45 },
+    ],
+  }
+}
+
+describe('fire modes and accuracy', () => {
+  it('derives hit chance from soldier accuracy, fire mode, and distance', () => {
+    const game = createGame(fireMission())
+    const ada = unit(game, 'ada')
+    const wraith = unit(game, 'wraith-1')
+    // Distance 4 → 9% range penalty on top of the mode factor.
+    expect(hitChance(game, ada, wraith, 'snap')).toBe(51)
+    expect(hitChance(game, ada, wraith, 'auto')).toBe(33)
+    expect(hitChance(game, ada, wraith, 'aimed')).toBe(72)
+    // Point blank drops the range penalty entirely.
+    const close = { ...game, units: game.units.map(u => u.id === 'wraith-1' ? { ...u, x: 1 } : u) }
+    expect(hitChance(close, unit(close, 'ada'), unit(close, 'wraith-1'), 'aimed')).toBe(81)
+  })
+
+  it('penalizes targets shielded by cover on the shooter-facing side', () => {
+    const mission = fireMission()
+    const covered: TacticalMission = {
+      ...mission,
+      map: defineTacticalMap({ rows: ['..........', '...o......', '..........'], legend: rangeLegend }),
+    }
+    const game = createGame(covered)
+    const ada = unit(game, 'ada')
+    const wraith = unit(game, 'wraith-1')
+    expect(hitChance(game, ada, wraith, 'aimed')).toBe(52)
+    // The same crate does not shield against fire from the opposite side.
+    const flanked = { ...game, units: game.units.map(u => u.id === 'ada' ? { ...u, x: 8 } : u) }
+    expect(hitChance(flanked, unit(flanked, 'ada'), unit(flanked, 'wraith-1'), 'aimed')).toBe(72)
+  })
+
+  it('spends the fire mode cost, hits deterministically, and tracks landed hits', () => {
+    const game = createGame(fireMission())
+    const hit = attack({ ...game, rngState: RNG_SURE_HIT }, 'wraith-1', 'aimed')
+    expect(unit(hit, 'wraith-1').hp).toBe(9)
+    expect(unit(hit, 'ada')).toMatchObject({ ap: 12 - FIRE_MODES.aimed.cost, hits: 1 })
+    expect(hit.log[0]).toContain('aimed shot hits Wraith for 3 damage')
+
+    const miss = attack({ ...game, rngState: RNG_SURE_MISS }, 'wraith-1', 'snap')
+    expect(unit(miss, 'wraith-1').hp).toBe(12)
+    expect(unit(miss, 'ada')).toMatchObject({ ap: 12 - FIRE_MODES.snap.cost, hits: 0 })
+    expect(miss.log[0]).toContain('snap shot misses Wraith')
+    expect(miss.rngState).not.toBe(game.rngState)
+  })
+
+  it('fires three auto rounds, each rolled separately', () => {
+    const game = createGame(fireMission())
+    const triple = attack({ ...game, rngState: RNG_TRIPLE_HIT }, 'wraith-1', 'auto')
+    expect(unit(triple, 'wraith-1').hp).toBe(3)
+    expect(unit(triple, 'ada')).toMatchObject({ ap: 12 - FIRE_MODES.auto.cost, hits: 3 })
+    expect(triple.log[0]).toContain('auto shot hits Wraith 3x for 9 damage')
+
+    const single = attack({ ...game, rngState: RNG_HIT_THEN_MISS }, 'wraith-1', 'auto')
+    expect(unit(single, 'wraith-1').hp).toBeLessThan(12)
+    expect(unit(single, 'ada').hits).toBeLessThan(3)
+  })
+
+  it('refuses a fire mode the soldier cannot afford', () => {
+    const game = createGame(fireMission())
+    const tired = {
+      ...game,
+      rngState: RNG_SURE_HIT,
+      units: game.units.map(u => u.id === 'ada' ? { ...u, ap: FIRE_MODES.aimed.cost - 1 } : u),
+    }
+    expect(legalTargets(tired, 'aimed')).toEqual([])
+    expect(attack(tired, 'wraith-1', 'aimed')).toBe(tired)
+    expect(legalTargets(tired, 'snap').map(u => u.id)).toContain('wraith-1')
+  })
+
+  it('keeps enemies from sniping beyond vision range, so every shooter is visible to its target', () => {
+    const mission = fireMission()
+    const dark: TacticalMission = {
+      ...mission,
+      visionRange: 6,
+      units: mission.units.map(unit => unit.id === 'wraith-1' ? { ...unit, x: 8 } : unit),
+    }
+    const staged = { ...createGame(dark), phase: 'enemy' as const, selectedId: undefined, rngState: RNG_SURE_HIT }
+    const result = enemyTurn(staged)
+    // Clear corridor, sure-hit roll — but at distance 8 the wraith advances instead of firing.
+    expect(unit(result, 'ada').hp).toBe(8)
+    expect(unit(result, 'wraith-1').x).toBe(7)
+  })
+
+  it('rolls enemy fire with the same accuracy system so cover protects crew', () => {
+    const game = createGame(fireMission())
+    const staged = {
+      ...game,
+      phase: 'enemy' as const,
+      selectedId: undefined,
+      rngState: RNG_SURE_MISS,
+    }
+    const missed = enemyTurn(staged)
+    expect(unit(missed, 'ada').hp).toBe(8)
+    expect(missed.log.some(entry => entry.includes('misses'))).toBe(true)
+
+    const hit = enemyTurn({ ...staged, rngState: RNG_SURE_HIT })
+    expect(unit(hit, 'ada').hp).toBe(6)
   })
 })
 
@@ -64,8 +191,8 @@ function doorMission(): TacticalMission {
     map: defineTacticalMap({ rows: ['..D..'], legend: doorLegend }),
     crewSpawns: [{ x: 0, y: 0 }],
     units: [
-      { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 4 },
-      { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 4, y: 0, hp: 6, ap: 4 },
+      { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 12, accuracy: 60 },
+      { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 4, y: 0, hp: 6, ap: 12, accuracy: 45 },
     ],
   }
 }
@@ -104,9 +231,9 @@ describe('closed doors', () => {
       map: defineTacticalMap({ rows: ['..D...'], legend: doorLegend }),
       crewSpawns: [{ x: 0, y: 0 }, { x: 4, y: 0 }],
       units: [
-        { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 4 },
-        { id: 'milo', name: 'Milo', role: 'Engineer', team: 'crew', x: 4, y: 0, hp: 8, ap: 4 },
-        { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 5, y: 0, hp: 6, ap: 4 },
+        { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 12, accuracy: 60 },
+        { id: 'milo', name: 'Milo', role: 'Engineer', team: 'crew', x: 4, y: 0, hp: 8, ap: 12, accuracy: 45 },
+        { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 5, y: 0, hp: 6, ap: 12, accuracy: 45 },
       ],
     }
     const game = createGame(mission)

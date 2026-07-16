@@ -21,6 +21,15 @@ export type Status = 'playing' | 'victory' | 'defeat'
 export type MissionResolution =
   | { readonly result: 'victory'; readonly reason: 'hostiles-eliminated' | 'survivor-rescued' }
   | { readonly result: 'defeat'; readonly reason: 'crew-lost' | 'deadline-expired' }
+export type FireModeId = 'snap' | 'auto' | 'aimed'
+
+export interface FireMode {
+  readonly id: FireModeId
+  readonly label: string
+  readonly cost: number
+  readonly shots: number
+  readonly factor: number
+}
 
 export interface Unit extends Point {
   id: string
@@ -30,6 +39,8 @@ export interface Unit extends Point {
   hp: number
   maxHp: number
   ap: number
+  accuracy: number
+  hits: number
 }
 
 export interface GameState {
@@ -45,19 +56,36 @@ export interface GameState {
   selectedId?: string
   explored: CellKey[]
   openDoors: CellKey[]
+  rngState: number
   log: string[]
 }
 
-const ATTACK_RANGE = 4
-const ATTACK_COST = 2
+export const FIRE_MODES: Readonly<Record<FireModeId, FireMode>> = {
+  snap: { id: 'snap', label: 'Snap shot', cost: 4, shots: 1, factor: 0.85 },
+  auto: { id: 'auto', label: 'Auto shot', cost: 8, shots: 3, factor: 0.6 },
+  aimed: { id: 'aimed', label: 'Aimed shot', cost: 10, shots: 1, factor: 1.15 },
+}
+
+export const TURN_TIME_UNITS = 12
+export const MOVE_COST = 3
+const ATTACK_RANGE = 8
 const DEFAULT_CREW_DAMAGE = 3
 const ENEMY_DAMAGE = 2
+const DISTANCE_PENALTY = 3
+const COVER_PENALTY = 20
+const MIN_CHANCE = 5
+const MAX_CHANCE = 95
+const DEFAULT_MISSION_SEED = 1
 
 const alive = (unit: Unit): boolean => unit.hp > 0
 const distance = (a: Point, b: Point): number => Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
 
+function nextSeed(seed: number): number {
+  return (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0
+}
+
 function createUnit(placement: UnitPlacement): Unit {
-  return { ...placement, maxHp: placement.maxHp ?? placement.hp }
+  return { ...placement, maxHp: placement.maxHp ?? placement.hp, hits: 0 }
 }
 
 export function createGame(mission: TacticalMission = BOARDING_MISSION): GameState {
@@ -72,6 +100,7 @@ export function createGame(mission: TacticalMission = BOARDING_MISSION): GameSta
     selectedId: mission.units.find(unit => unit.team === 'crew')?.id,
     explored: [],
     openDoors: [],
+    rngState: (mission.seed ?? DEFAULT_MISSION_SEED) >>> 0,
     log: [`Mission started. ${mission.objective.label}.`],
     units: mission.units.map(createUnit),
   }))
@@ -138,12 +167,12 @@ export function legalMoves(state: GameState): Point[] {
   while (queue.length > 0) {
     const point = queue.shift()!
     const cost = seen.get(key(point))!
-    if (cost >= unit.ap) continue
+    if (cost + MOVE_COST > unit.ap) continue
 
     for (const neighbor of neighbors(state.map, point)) {
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || !visible.has(neighborKey) || occupied(state, neighbor, unit.id)) continue
-      seen.set(neighborKey, cost + 1)
+      seen.set(neighborKey, cost + MOVE_COST)
       moves.push(neighbor)
       if (!isClosedDoor(state, neighbor)) queue.push(neighbor)
     }
@@ -164,7 +193,7 @@ function shortestDistance(state: GameState, start: Point, end: Point, ignore?: s
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || !allowed.has(neighborKey) || occupied(state, neighbor, ignore)) continue
       seen.add(neighborKey)
-      if (neighborKey === key(end) || !isClosedDoor(state, neighbor)) queue.push([neighbor, cost + 1])
+      if (neighborKey === key(end) || !isClosedDoor(state, neighbor)) queue.push([neighbor, cost + MOVE_COST])
     }
   }
 
@@ -240,27 +269,64 @@ function canHit(state: GameState, attacker: Unit, target: Unit): boolean {
     && hasLineOfSight(activeMap(state), attacker, target)
 }
 
-export function legalTargets(state: GameState): Unit[] {
+/** True when a cover cell shields the target on its shooter-facing side. */
+function targetInCover(state: GameState, shooter: Point, target: Point): boolean {
+  const dx = Math.sign(shooter.x - target.x)
+  const dy = Math.sign(shooter.y - target.y)
+  const shields = [
+    dx !== 0 ? { x: target.x + dx, y: target.y } : undefined,
+    dy !== 0 ? { x: target.x, y: target.y + dy } : undefined,
+  ]
+  return shields.some(cell => cell && cellAt(state.map, cell)?.cover === true)
+}
+
+export function hitChance(state: GameState, attacker: Unit, target: Unit, mode: FireModeId): number {
+  const base = attacker.accuracy * FIRE_MODES[mode].factor
+  const range = DISTANCE_PENALTY * Math.max(0, distance(attacker, target) - 1)
+  const cover = targetInCover(state, attacker, target) ? COVER_PENALTY : 0
+  return Math.min(MAX_CHANCE, Math.max(MIN_CHANCE, Math.round(base - range - cover)))
+}
+
+export function legalTargets(state: GameState, mode: FireModeId = 'snap'): Unit[] {
   const attacker = state.units.find(unit => unit.id === state.selectedId)
-  if (state.phase !== 'player' || state.status !== 'playing' || !attacker || attacker.team !== 'crew' || attacker.ap < ATTACK_COST) return []
+  if (state.phase !== 'player' || state.status !== 'playing' || !attacker || attacker.team !== 'crew' || attacker.ap < FIRE_MODES[mode].cost) return []
   const visible = new Set(currentVisibility(state).map(key))
   return state.units.filter(target => visible.has(key(target)) && canHit(state, attacker, target)).sort((a, b) => a.id.localeCompare(b.id))
 }
 
-export function attack(state: GameState, targetId: string): GameState {
+export function attack(state: GameState, targetId: string, modeId: FireModeId = 'snap'): GameState {
   const attacker = state.units.find(unit => unit.id === state.selectedId)
-  const target = legalTargets(state).find(unit => unit.id === targetId)
+  const target = legalTargets(state, modeId).find(unit => unit.id === targetId)
   if (!attacker || !target) return state
 
+  const mode = FIRE_MODES[modeId]
+  const chance = hitChance(state, attacker, target, modeId)
   const damage = state.mission.crewDamage ?? DEFAULT_CREW_DAMAGE
+  let rngState = state.rngState
+  let hitsLanded = 0
+  let remainingHp = target.hp
+  for (let shot = 0; shot < mode.shots && remainingHp > 0; shot++) {
+    rngState = nextSeed(rngState)
+    if ((rngState / 0x1_0000_0000) * 100 < chance) {
+      hitsLanded += 1
+      remainingHp = Math.max(0, remainingHp - damage)
+    }
+  }
+
+  const report = hitsLanded === 0
+    ? `${attacker.name}'s ${mode.label.toLowerCase()} misses ${target.name} (${chance}%).`
+    : mode.shots > 1
+      ? `${attacker.name}'s ${mode.label.toLowerCase()} hits ${target.name} ${hitsLanded}x for ${hitsLanded * damage} damage (${chance}%).`
+      : `${attacker.name}'s ${mode.label.toLowerCase()} hits ${target.name} for ${damage} damage (${chance}%).`
   return reveal(evaluateMission({
     ...state,
+    rngState,
     units: state.units.map(unit => unit.id === attacker.id
-      ? { ...unit, ap: unit.ap - ATTACK_COST }
+      ? { ...unit, ap: unit.ap - mode.cost, hits: unit.hits + hitsLanded }
       : unit.id === target.id
-        ? { ...unit, hp: Math.max(0, unit.hp - damage) }
+        ? { ...unit, hp: remainingHp }
         : unit),
-    log: [`${attacker.name} fires on ${target.name}: ${damage} damage.`, ...state.log].slice(0, 5),
+    log: [report, ...state.log].slice(0, 5),
   }))
 }
 
@@ -270,7 +336,7 @@ export function endTurn(state: GameState): GameState {
     ...state,
     phase: 'enemy',
     selectedId: undefined,
-    units: state.units.map(unit => unit.team === 'enemy' ? { ...unit, ap: 4 } : unit),
+    units: state.units.map(unit => unit.team === 'enemy' ? { ...unit, ap: TURN_TIME_UNITS } : unit),
     log: ['Enemy activity detected…', ...state.log].slice(0, 5),
   }
 }
@@ -307,12 +373,25 @@ export function enemyTurn(input: GameState): GameState {
     const nearest = targets[0]
     if (!nearest) break
 
-    const attackTarget = targets.find(target => canHit(state, current, target))
+    // Enemies never fire from beyond vision range: any shooter that can hit a
+    // crew member is therefore visible to that crew member in return.
+    const attackTarget = targets.find(target => distance(current, target) <= state.visionRange && canHit(state, current, target))
     if (attackTarget) {
+      const chance = hitChance(state, current, attackTarget, 'snap')
+      const rngState = nextSeed(state.rngState)
+      const landed = (rngState / 0x1_0000_0000) * 100 < chance
       state = {
         ...state,
-        units: state.units.map(unit => unit.id === attackTarget.id ? { ...unit, hp: Math.max(0, unit.hp - ENEMY_DAMAGE) } : unit),
-        log: [`${current.name} strikes ${attackTarget.name}: ${ENEMY_DAMAGE} damage.`, ...state.log].slice(0, 5),
+        rngState,
+        units: landed
+          ? state.units.map(unit => unit.id === attackTarget.id ? { ...unit, hp: Math.max(0, unit.hp - ENEMY_DAMAGE) } : unit)
+          : state.units,
+        log: [
+          landed
+            ? `${current.name} hits ${attackTarget.name} for ${ENEMY_DAMAGE} damage.`
+            : `${current.name} fires at ${attackTarget.name} and misses.`,
+          ...state.log,
+        ].slice(0, 5),
       }
     } else {
       const wasVisible = isCellVisible(state, current)
@@ -346,6 +425,6 @@ export function enemyTurn(input: GameState): GameState {
     phase: 'player',
     turn: state.turn + 1,
     selectedId: state.units.find(unit => unit.team === 'crew' && alive(unit))?.id,
-    units: state.units.map(unit => unit.team === 'crew' && alive(unit) ? { ...unit, ap: 4 } : unit),
+    units: state.units.map(unit => unit.team === 'crew' && alive(unit) ? { ...unit, ap: TURN_TIME_UNITS } : unit),
   })
 }

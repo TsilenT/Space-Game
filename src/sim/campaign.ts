@@ -6,6 +6,7 @@ import {
   type SystemKind,
 } from './galaxy'
 import {
+  BASE_TIME_UNITS,
   BOARDING_MISSION,
   CIVILIAN_RESCUE_MISSION,
   DISTRESS_TRAP_MISSION,
@@ -28,6 +29,7 @@ export interface CampaignCrew {
   readonly role: string
   readonly hp: number
   readonly maxHp: number
+  readonly accuracy: number
 }
 
 export interface CampaignRecruit extends CampaignCrew {
@@ -99,6 +101,8 @@ export interface CrewMissionResult {
   readonly hpAfter: number
   readonly maxHp: number
   readonly status: CrewMissionStatus
+  readonly hitsLanded: number
+  readonly accuracyGained: number
 }
 
 export interface MissionReport {
@@ -157,6 +161,9 @@ export const CAMPAIGN_TUNING = {
   moonFuel: 2,
   amoebaHullDamage: 12,
   rescueTimeoutHullDamage: 20,
+  accuracyPerHit: 2,
+  accuracyGainCap: 8,
+  accuracyStatCap: 90,
 } as const
 
 const RECRUIT_NAMES = ['Nia Calder', 'Tomas Reed', 'Yara Quill', 'Dev Malik', 'Rin Navarro', 'Bo Sato'] as const
@@ -178,6 +185,7 @@ function indexFrom(seed: number, length: number): number {
 function seededRecruit(seed: number, id: string, source: CampaignRecruit['source']): CampaignRecruit {
   const nameSeed = nextSeed(seed)
   const roleSeed = nextSeed(nameSeed)
+  const accuracySeed = nextSeed(roleSeed)
   const roles = source === 'mercenary' ? MERCENARY_ROLES : SURVIVOR_ROLES
   return {
     id,
@@ -185,6 +193,7 @@ function seededRecruit(seed: number, id: string, source: CampaignRecruit['source
     role: roles[indexFrom(roleSeed, roles.length)],
     hp: 8,
     maxHp: 8,
+    accuracy: (source === 'mercenary' ? 45 : 40) + indexFrom(accuracySeed, 16),
     source,
   }
 }
@@ -329,6 +338,7 @@ export function createCampaign(seed = DEFAULT_CAMPAIGN_SEED): CampaignState {
         role: unit.role,
         hp: unit.hp,
         maxHp: unit.maxHp ?? unit.hp,
+        accuracy: unit.accuracy,
       })),
     offers: offersFrom(galaxy, galaxy.startId, [galaxy.startId]),
   }
@@ -511,9 +521,15 @@ function populateMission(state: CampaignState, template: TacticalMission): Tacti
     team: 'crew' as const,
     hp: member.hp,
     maxHp: member.maxHp,
-    ap: 4,
+    ap: BASE_TIME_UNITS,
+    accuracy: member.accuracy,
   }))
-  return { ...template, crewDamage: state.weaponDamage, units: [...crew, ...enemies] }
+  return {
+    ...template,
+    crewDamage: state.weaponDamage,
+    seed: (state.seed + state.jump * 7919) >>> 0,
+    units: [...crew, ...enemies],
+  }
 }
 
 export function missionFor(state: CampaignState): TacticalMission {
@@ -521,20 +537,32 @@ export function missionFor(state: CampaignState): TacticalMission {
   return populateMission(state, templateFor(state.activeMission))
 }
 
+function accuracyGain(hits: number): number {
+  return Math.min(CAMPAIGN_TUNING.accuracyGainCap, hits * CAMPAIGN_TUNING.accuracyPerHit)
+}
+
 function missionCrew(state: CampaignState, completedMission: GameState): CampaignCrew[] {
   return state.crew.map(crew => {
     const unit = completedMission.units.find(candidate => candidate.team === 'crew' && candidate.id === crew.id)
     if (!unit || crew.hp <= 0) return crew
-    return { ...crew, hp: Math.max(0, Math.min(crew.maxHp, unit.hp)) }
+    return {
+      ...crew,
+      hp: Math.max(0, Math.min(crew.maxHp, unit.hp)),
+      accuracy: unit.hp > 0
+        ? Math.min(CAMPAIGN_TUNING.accuracyStatCap, crew.accuracy + accuracyGain(unit.hits))
+        : crew.accuracy,
+    }
   })
 }
 
 function crewReport(
   state: CampaignState,
   crew: readonly CampaignCrew[],
+  completedMission: GameState,
 ): CrewMissionResult[] {
   return crew.map(member => {
     const before = state.crew.find(candidate => candidate.id === member.id)!
+    const unit = completedMission.units.find(candidate => candidate.team === 'crew' && candidate.id === member.id)
     return {
       id: member.id,
       name: member.name,
@@ -543,6 +571,8 @@ function crewReport(
       hpAfter: member.hp,
       maxHp: member.maxHp,
       status: member.hp <= 0 ? 'killed' : member.hp < member.maxHp ? 'wounded' : 'ready',
+      hitsLanded: unit?.hits ?? 0,
+      accuracyGained: member.accuracy - before.accuracy,
     }
   })
 }
@@ -570,7 +600,7 @@ export function resolveMission(state: CampaignState, completedMission: GameState
     creditsGained: rewards.credits,
     fuelGained: rewards.fuel,
     hullDamage,
-    crew: crewReport(state, crewAfterMission),
+    crew: crewReport(state, crewAfterMission, completedMission),
   }
   const resolved: CampaignState = {
     ...state,

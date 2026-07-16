@@ -63,9 +63,9 @@ function corridorMission(): TacticalMission {
     map: mapFrom('........'),
     crewSpawns: [{ x: 0, y: 0 }, { x: 6, y: 0 }],
     units: [
-      { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 4 },
-      { id: 'milo', name: 'Milo', role: 'Engineer', team: 'crew', x: 6, y: 0, hp: 8, ap: 4 },
-      { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 7, y: 0, hp: 6, ap: 4 },
+      { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 12, accuracy: 60 },
+      { id: 'milo', name: 'Milo', role: 'Engineer', team: 'crew', x: 6, y: 0, hp: 8, ap: 12, accuracy: 45 },
+      { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 7, y: 0, hp: 6, ap: 12, accuracy: 45 },
     ],
   }
 }

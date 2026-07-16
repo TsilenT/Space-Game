@@ -13,7 +13,7 @@ npm install
 npm run dev
 ```
 
-Navigate a seeded galaxy map: 18 star systems in rings around the Galactic Core, each a distress call, starbase, or abandoned moon. You can see the mission type of every system connected to anywhere you have been, jumps only hold your ring or fall inward, and visited systems are gone for good. Seeded encounters can reveal survivors, salvage, fuel, pirates, traps, or stranger hazards; tactical missions use multiple authored layouts and include both elimination and an eight-turn rescue. Crew health and death, recruits, a weapon upgrade, hull damage, credits, salvage, and fuel persist across the run — reach the core to win.
+Navigate a seeded galaxy map: 18 star systems in rings around the Galactic Core, each a distress call, starbase, or abandoned moon. You can see the mission type of every system connected to anywhere you have been, jumps only hold your ring or fall inward, and visited systems are gone for good. Seeded encounters can reveal survivors, salvage, fuel, pirates, traps, or stranger hazards; tactical missions use multiple authored layouts and include both elimination and an eight-turn rescue. Soldiers spend time units on snap, auto, or aimed shots whose hit chance depends on the shooter's skill, distance, and cover — and every hit landed trains the survivor's aim for the next fight. Crew health and death, recruits, a weapon upgrade, hull damage, credits, salvage, and fuel persist across the run — reach the core to win.
 
 ## Technology
 
