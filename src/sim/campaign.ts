@@ -1,5 +1,11 @@
 import type { GameState } from './game'
 import {
+  generateGalaxy,
+  jumpTargets,
+  type Galaxy,
+  type SystemKind,
+} from './galaxy'
+import {
   BOARDING_MISSION,
   CIVILIAN_RESCUE_MISSION,
   DISTRESS_TRAP_MISSION,
@@ -7,8 +13,9 @@ import {
   type TacticalMission,
 } from './map'
 
-export type CampaignPhase = 'route' | 'encounter' | 'mission' | 'debrief' | 'lost'
-export type DestinationKind = 'distress' | 'starbase' | 'abandoned-moon'
+export type CampaignPhase = 'route' | 'encounter' | 'mission' | 'debrief' | 'victory' | 'lost'
+export type DestinationKind = Exclude<SystemKind, 'core'>
+export type { Galaxy, StarSystem, SystemKind } from './galaxy'
 export type RecoveryChoice = 'crew' | 'hull' | 'bank'
 export type CrewMissionStatus = 'ready' | 'wounded' | 'killed'
 export type MoonOutcome = 'salvage' | 'survivor' | 'fuel' | 'amoeba'
@@ -29,7 +36,7 @@ export interface CampaignRecruit extends CampaignCrew {
 
 export interface DestinationOffer {
   readonly id: string
-  readonly kind: DestinationKind
+  readonly kind: SystemKind
   readonly name: string
   readonly eventSeed: number
 }
@@ -109,7 +116,9 @@ export interface MissionReport {
 export interface CampaignState {
   readonly phase: CampaignPhase
   readonly seed: number
-  readonly rngState: number
+  readonly galaxy: Galaxy
+  readonly currentSystemId: string
+  readonly visitedSystemIds: readonly string[]
   readonly jump: number
   readonly fuel: number
   readonly maxFuel: number
@@ -150,12 +159,6 @@ export const CAMPAIGN_TUNING = {
   rescueTimeoutHullDamage: 20,
 } as const
 
-const DESTINATIONS: readonly DestinationKind[] = ['distress', 'starbase', 'abandoned-moon']
-const DESTINATION_NAMES: Readonly<Record<DestinationKind, readonly string[]>> = {
-  distress: ['Broken Chorus', 'Emergency Beacon K-9', 'Last Light Signal'],
-  starbase: ['Port Meridian', 'Gannet Exchange', 'Saint Orison Depot'],
-  'abandoned-moon': ['Orpheus Minor', 'Ash Moon D-14', 'Silent Caldera'],
-}
 const RECRUIT_NAMES = ['Nia Calder', 'Tomas Reed', 'Yara Quill', 'Dev Malik', 'Rin Navarro', 'Bo Sato'] as const
 const SURVIVOR_ROLES = ['Pilot', 'Mechanic', 'Field medic', 'Surveyor'] as const
 const MERCENARY_ROLES = ['Mercenary', 'Security contractor', 'Bounty hunter'] as const
@@ -186,26 +189,13 @@ function seededRecruit(seed: number, id: string, source: CampaignRecruit['source
   }
 }
 
-function routeOffers(jump: number, inputSeed: number): { offers: DestinationOffer[]; rngState: number } {
-  let rngState = inputSeed
-  const offers = DESTINATIONS.map(kind => {
-    rngState = nextSeed(rngState)
-    const eventSeed = rngState
-    const names = DESTINATION_NAMES[kind]
-    return {
-      id: `jump-${jump}-${kind}-${eventSeed.toString(16)}`,
-      kind,
-      name: names[indexFrom(eventSeed, names.length)],
-      eventSeed,
-    }
-  })
-
-  for (let index = offers.length - 1; index > 0; index--) {
-    rngState = nextSeed(rngState)
-    const swap = Math.floor(unitRoll(rngState) * (index + 1))
-    ;[offers[index], offers[swap]] = [offers[swap], offers[index]]
-  }
-  return { offers, rngState }
+function offersFrom(galaxy: Galaxy, currentId: string, visitedIds: readonly string[]): DestinationOffer[] {
+  return jumpTargets(galaxy, currentId, visitedIds).map(system => ({
+    id: system.id,
+    kind: system.kind,
+    name: system.name,
+    eventSeed: system.eventSeed,
+  }))
 }
 
 function starbaseEncounter(offer: DestinationOffer): StarbaseEncounter {
@@ -311,17 +301,18 @@ function withNextRoute(state: CampaignState): CampaignState {
   if (base.hull <= 0 || base.fuel <= 0 || !hasLivingCrew(base)) {
     return { ...base, phase: 'lost', offers: [] }
   }
-  const route = routeOffers(base.jump, base.rngState)
-  return { ...base, phase: 'route', ...route }
+  return { ...base, phase: 'route', offers: offersFrom(base.galaxy, base.currentSystemId, base.visitedSystemIds) }
 }
 
 export function createCampaign(seed = DEFAULT_CAMPAIGN_SEED): CampaignState {
   const normalizedSeed = seed >>> 0
-  const route = routeOffers(1, normalizedSeed)
+  const galaxy = generateGalaxy(normalizedSeed)
   return {
     phase: 'route',
     seed: normalizedSeed,
-    rngState: route.rngState,
+    galaxy,
+    currentSystemId: galaxy.startId,
+    visitedSystemIds: [galaxy.startId],
     jump: 1,
     fuel: CAMPAIGN_TUNING.startingFuel,
     maxFuel: CAMPAIGN_TUNING.maxFuel,
@@ -339,7 +330,7 @@ export function createCampaign(seed = DEFAULT_CAMPAIGN_SEED): CampaignState {
         hp: unit.hp,
         maxHp: unit.maxHp ?? unit.hp,
       })),
-    offers: route.offers,
+    offers: offersFrom(galaxy, galaxy.startId, [galaxy.startId]),
   }
 }
 
@@ -347,15 +338,19 @@ export function chooseDestination(state: CampaignState, offerId: string): Campai
   if (state.phase !== 'route' || state.fuel <= 0) return state
   const offer = state.offers.find(candidate => candidate.id === offerId)
   if (!offer) return state
-  return {
+  const arrived = {
     ...state,
-    phase: 'encounter',
     fuel: state.fuel - 1,
+    currentSystemId: offer.id,
+    visitedSystemIds: [...state.visitedSystemIds, offer.id],
     offers: [],
-    encounter: encounterFor(offer),
     activeMission: undefined,
     missionReport: undefined,
   }
+  if (offer.kind === 'core') {
+    return { ...arrived, phase: 'victory', encounter: undefined }
+  }
+  return { ...arrived, phase: 'encounter', encounter: encounterFor(offer) }
 }
 
 export function declineEncounter(state: CampaignState): CampaignState {

@@ -28,9 +28,9 @@ This choice keeps a four-person prototype readable while creating reusable found
 - It established persistent crew wounds and death, hull damage, salvage spending, fuel pressure, and explicit campaign loss/restart behavior.
 - Its fixed contact, fixed reward, and board/scavenge/repair/withdraw screen were temporary validation tuning. The frontier route decision below replaces that encounter structure while preserving its persistence rules.
 
-### Frontier route variety — July 12, 2026
+### Frontier route variety — July 12, 2026 (route presentation superseded)
 
-- Navigation becomes the stable between-encounter phase. Every route presents one distress call, one starbase, and one abandoned moon; choosing a destination consumes one fuel.
+- Navigation becomes the stable between-encounter phase. Every route presented one distress call, one starbase, and one abandoned moon; the galaxy map decision below replaces that flat three-card route with a persistent map while preserving every encounter, market, recruit, and mission rule in this section.
 - Encounter rolls are deterministic and seeded. A new run draws a fresh seed, while an explicit `?seed=` URL reproduces a run for playtesting. Each outcome is rolled once on arrival and applied at most once, so rendering or inspection cannot reroll it.
 - Distress calls can reveal a survivor, pirates attacking a civilian ship, or a deliberate trap. The rescue variant gives the squad through Turn 8 to reach the survivor before the ship explodes.
 - Starbases provide a compact market for fuel, salvage exchange, a modest weapon improvement, and a possible mercenary offer. Credits remain distinct from salvage so trade and physical recovery have different pressures.
@@ -45,6 +45,15 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Enemies can open doors, matching crew capability. This trades the "seal a door behind you" isolation tactic for a more symmetric, X-COM-style breach moment where either side can be ambushed opening one.
 - Re-closing doors, a dedicated open action separate from moving, and any stealth/ambush bonus tied to doors remain deferred.
 
+### Galaxy map — July 16, 2026
+
+- The campaign takes place on a seeded, deterministic galaxy map: 18 star systems in four concentric rings (a 7-system rim, then 6, then 4, then the Galactic Core), generated once per run under `src/sim/galaxy.ts`.
+- Every non-core system is one of the existing encounter kinds — distress call, starbase, or abandoned moon — with its event seed fixed at generation, so an encounter's outcome is decided the moment the galaxy exists.
+- Jumps go only to directly connected systems, and only laterally along the current ring or inward toward the core — never back outward, and never to a visited system. Because every system keeps at least one inward link and ring position never increases along a route, the ship can always reach the core and can never strand itself. This is the chosen answer to the dead-end question: generation and the movement rule prevent dead ends by construction.
+- The player sees the mission type of every system adjacent to anywhere they have been; all other systems appear as uncharted positions on the map.
+- Reaching the Galactic Core wins the run with a victory screen. The authored final battle at the core is deliberately deferred to a later slice.
+- The navigation screen renders the galaxy as a clickable SVG map with the reachable systems repeated as accessible route cards; visited systems stay dimmed as a route history.
+
 ## Open creative questions
 
 1. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?
@@ -54,3 +63,4 @@ This choice keeps a four-person prototype readable while creating reusable found
 5. Should the tone lean serious, comedic, or deliberately mixed?
 6. When should the authored mission modules become a constrained procedural generator?
 7. Doors are now in; which tactical system should follow next: cover, overwatch, or environmental hazards?
+8. What is the authored final battle at the Galactic Core, and what makes it mechanically distinct from a standard boarding?
