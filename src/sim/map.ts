@@ -11,6 +11,7 @@ export interface Cell extends Point {
   readonly walkable: boolean
   readonly opaque: boolean
   readonly door?: boolean
+  readonly cover?: boolean
 }
 
 export interface RoomDefinition {
@@ -39,6 +40,7 @@ export interface UnitPlacement extends Point {
   readonly hp: number
   readonly maxHp?: number
   readonly ap: number
+  readonly accuracy: number
 }
 
 export type TacticalObjective =
@@ -62,6 +64,7 @@ export interface TacticalMission {
   readonly crewSpawns: readonly Point[]
   readonly units: readonly UnitPlacement[]
   readonly crewDamage?: number
+  readonly seed?: number
 }
 
 interface TileDefinition {
@@ -69,6 +72,7 @@ interface TileDefinition {
   readonly walkable: boolean
   readonly opaque: boolean
   readonly door?: boolean
+  readonly cover?: boolean
 }
 
 interface MapDefinition {
@@ -114,12 +118,15 @@ export const roomAt = (map: TacticalMap, point: Point): string => cellAt(map, po
 const floor = (room: string): TileDefinition => ({ room, walkable: true, opaque: false })
 const wall: TileDefinition = { room: 'Hull', walkable: false, opaque: true }
 const closedDoor = (room: string): TileDefinition => ({ room, walkable: true, opaque: true, door: true })
+const crate = (room: string): TileDefinition => ({ room, walkable: false, opaque: false, cover: true })
+
+export const BASE_TIME_UNITS = 12
 
 const DEFAULT_CREW = [
-  { id: 'ada', name: 'Ada Voss', role: 'Marine', team: 'crew', hp: 8, ap: 4 },
-  { id: 'milo', name: 'Milo Chen', role: 'Engineer', team: 'crew', hp: 8, ap: 4 },
-  { id: 'imani', name: 'Imani Okafor', role: 'Medic', team: 'crew', hp: 8, ap: 4 },
-  { id: 'soren', name: 'Soren Vale', role: 'Scout', team: 'crew', hp: 8, ap: 4 },
+  { id: 'ada', name: 'Ada Voss', role: 'Marine', team: 'crew', hp: 8, ap: BASE_TIME_UNITS, accuracy: 55 },
+  { id: 'milo', name: 'Milo Chen', role: 'Engineer', team: 'crew', hp: 8, ap: BASE_TIME_UNITS, accuracy: 45 },
+  { id: 'imani', name: 'Imani Okafor', role: 'Medic', team: 'crew', hp: 8, ap: BASE_TIME_UNITS, accuracy: 45 },
+  { id: 'soren', name: 'Soren Vale', role: 'Scout', team: 'crew', hp: 8, ap: BASE_TIME_UNITS, accuracy: 60 },
 ] as const satisfies readonly Omit<UnitPlacement, keyof Point>[]
 
 function crewAt(spawns: readonly Point[]): UnitPlacement[] {
@@ -144,9 +151,9 @@ export const BOARDING_MISSION: TacticalMission = {
       '#AAA#MM#CCC#',
       '#AAADMMMCCC#',
       'AAAA#MMMCCCC',
-      'AAAA#MMMCCCC',
+      'AAAA#MMMCCcC',
       'AAAARRR#WWWW',
-      'AAAARRRRHWWW',
+      'AAAARoRRHWWW',
       '#AAARRR#WWW#',
       '#AAA#RR#WWW#',
     ],
@@ -159,6 +166,8 @@ export const BOARDING_MISSION: TacticalMission = {
       W: floor('Weapons'),
       D: closedDoor('Medbay'),
       H: closedDoor('Weapons'),
+      o: crate('Reactor'),
+      c: crate('Bridge'),
     },
     rooms: [
       { name: 'Boarding Bay', label: { x: 1, y: 7 } },
@@ -177,9 +186,9 @@ export const BOARDING_MISSION: TacticalMission = {
   crewSpawns: BOARDING_CREW_SPAWNS,
   units: [
     ...crewAt(BOARDING_CREW_SPAWNS),
-    { id: 'wraith-1', name: 'Wraith Kesh', role: 'Void raider', team: 'enemy', x: 6, y: 2, hp: 6, ap: 4 },
-    { id: 'wraith-2', name: 'Wraith Oru', role: 'Void raider', team: 'enemy', x: 9, y: 2, hp: 6, ap: 4 },
-    { id: 'wraith-3', name: 'Wraith Vek', role: 'Void raider', team: 'enemy', x: 9, y: 6, hp: 6, ap: 4 },
+    { id: 'wraith-1', name: 'Wraith Kesh', role: 'Void raider', team: 'enemy', x: 6, y: 2, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'wraith-2', name: 'Wraith Oru', role: 'Void raider', team: 'enemy', x: 9, y: 2, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'wraith-3', name: 'Wraith Vek', role: 'Void raider', team: 'enemy', x: 9, y: 6, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
   ],
 }
 
@@ -206,9 +215,9 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
     rows: [
       '#DDD#CC#BBB#',
       '#DDDDCCBBBB#',
-      'DDDDCCCCBBBB',
+      'DDDDCCCCBbBB',
       'DDD##CCCBBBB',
-      'DDDDEEEE#BBB',
+      'DDDDeEEE#BBB',
       'DDDDEEEEBBBB',
       '#DDDEEEEBBB#',
       '#DDD#EE#BBB#',
@@ -219,6 +228,8 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
       C: floor('Commons'),
       B: floor('Bridge'),
       E: floor('Engineering'),
+      b: crate('Bridge'),
+      e: crate('Engineering'),
     },
     rooms: [
       { name: 'Dock', label: { x: 1, y: 7 } },
@@ -235,9 +246,9 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
   crewSpawns: COURIER_CREW_SPAWNS,
   units: [
     ...crewAt(COURIER_CREW_SPAWNS),
-    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', x: 6, y: 2, hp: 6, ap: 4 },
-    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', x: 8, y: 3, hp: 6, ap: 4 },
-    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', x: 9, y: 6, hp: 6, ap: 4 },
+    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', x: 6, y: 2, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', x: 8, y: 3, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', x: 9, y: 6, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
   ],
 }
 
@@ -273,8 +284,8 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
       '#AAAA##BBBB#',
       'AAAAAXXBBBBB',
       'AAA##XX##BBB',
-      'AAAACCCCCBBB',
-      '#AAACCCCCBB#',
+      'AAAAcCCCCBBB',
+      '#AAACCCcCBB#',
       '#AA##CCCCBB#',
       '##A##CC##B##',
     ],
@@ -284,6 +295,7 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
       X: floor('Crossway'),
       B: floor('Cargo Hold'),
       C: floor('Reactor Deck'),
+      c: crate('Reactor Deck'),
     },
     rooms: [
       { name: 'Airlock', label: { x: 2, y: 7 } },
@@ -300,10 +312,10 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
   crewSpawns: TRAP_CREW_SPAWNS,
   units: [
     ...crewAt(TRAP_CREW_SPAWNS),
-    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', x: 6, y: 2, hp: 6, ap: 4 },
-    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', x: 8, y: 2, hp: 6, ap: 4 },
-    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', x: 9, y: 5, hp: 6, ap: 4 },
-    { id: 'pirate-4', name: 'Mara Quill', role: 'Pirate gunner', team: 'enemy', x: 7, y: 4, hp: 6, ap: 4 },
+    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', x: 6, y: 2, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', x: 8, y: 2, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', x: 9, y: 5, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-4', name: 'Mara Quill', role: 'Pirate gunner', team: 'enemy', x: 7, y: 4, hp: 6, ap: BASE_TIME_UNITS, accuracy: 55 },
   ],
 }
 

@@ -29,7 +29,7 @@ import {
   type SystemKind,
 } from './sim/campaign'
 import { revealedSystemIds, systemById, type StarSystem } from './sim/galaxy'
-import { attack, createGame, currentVisibility, type GameState, legalMoves, legalTargets, move, selectUnit } from './sim/game'
+import { FIRE_MODES, attack, createGame, currentVisibility, type FireModeId, type GameState, hitChance, legalMoves, legalTargets, move, selectUnit } from './sim/game'
 import { cellAt, isWalkable, key } from './sim/map'
 import { TurnController } from './turnController'
 
@@ -58,6 +58,7 @@ const createRun = () => createCampaign(runSeed ?? freshRunSeed())
 let campaign = createRun()
 let state = createGame(boardingMissionFor(campaign))
 let controller: TurnController
+let fireMode: FireModeId = 'snap'
 let sceneReady = false
 let focusNextScreen = true
 let focusNextTactical = false
@@ -104,7 +105,7 @@ class TacticalScene extends Phaser.Scene {
     const visible = new Set(currentVisibility(state).map(key))
     const unit = state.units.find(candidate => candidate.hp > 0 && candidate.x === x && candidate.y === y && (candidate.team === 'crew' || visible.has(key(candidate))))
     if (unit?.team === 'crew') state = selectUnit(state, unit.id)
-    else if (unit?.team === 'enemy') state = attack(state, unit.id)
+    else if (unit?.team === 'enemy') state = attack(state, unit.id, fireMode)
     else state = move(state, x, y)
     controller.replace(state)
   }
@@ -116,7 +117,7 @@ class TacticalScene extends Phaser.Scene {
     const visible = new Set(currentVisibility(state).map(key))
     const explored = new Set(state.explored)
     const openDoors = new Set(state.openDoors)
-    const legalTargetIds = new Set(legalTargets(state).map(unit => unit.id))
+    const legalTargetIds = new Set(legalTargets(state, fireMode).map(unit => unit.id))
     graphics.fillStyle(0x07101c, 1).fillRect(0, 0, 800, 600)
     for (let y = 0; y < state.map.height; y++) for (let x = 0; x < state.map.width; x++) {
       const point = { x, y }
@@ -138,6 +139,10 @@ class TacticalScene extends Phaser.Scene {
       graphics.lineStyle(1, isVisible ? 0x426277 : 0x263946, isVisible ? .45 : .25).strokeRect(left, top, CELL - 2, CELL - 2)
       if (!isVisible) graphics.fillStyle(0x02070c, .58).fillRect(left, top, CELL - 2, CELL - 2)
       if (cell.door) graphics.fillStyle(isClosedDoor ? 0xf1bd5b : 0x63e3d6, isVisible ? .9 : .4).fillRect(left + CELL / 2 - 4, top + 6, 8, CELL - 14)
+      if (cell.cover) {
+        graphics.fillStyle(0x8a7550, isVisible ? .85 : .4).fillRoundedRect(left + 9, top + 9, CELL - 20, CELL - 20, 4)
+        graphics.lineStyle(2, 0x5a4b33, isVisible ? .9 : .45).strokeRoundedRect(left + 9, top + 9, CELL - 20, CELL - 20, 4)
+      }
     }
     for (const point of legalMoves(state)) graphics.fillStyle(0x55d9d0, .24).fillRect(OX + point.x * CELL + 4, OY + point.y * CELL + 4, CELL - 10, CELL - 10)
     for (const system of state.map.systems.filter(marker => explored.has(key(marker)))) {
@@ -441,23 +446,40 @@ function renderCampaignHud() {
 function updateTacticalHud(current: GameState) {
   const selected = current.units.find(unit => unit.id === current.selectedId)
   const visible = new Set(currentVisibility(current).map(key))
-  const legalTargetIds = new Set(legalTargets(current).map(unit => unit.id))
+  const legalTargetIds = new Set(legalTargets(current, fireMode).map(unit => unit.id))
   const knownHostiles = current.units.filter(unit => unit.team === 'enemy' && (unit.hp <= 0 || visible.has(key(unit))))
   const hostileMarkup = knownHostiles.length > 0
-    ? knownHostiles.map(unit => `<p class="hostile"><span>${unit.name}</span><b>${unit.hp > 0 ? `${unit.hp}/${unit.maxHp} · ${legalTargetIds.has(unit.id) ? 'CLEAR' : 'NO SHOT'}` : 'NEUTRALIZED'}</b></p>`).join('')
+    ? knownHostiles.map(unit => {
+      const status = unit.hp <= 0
+        ? 'NEUTRALIZED'
+        : legalTargetIds.has(unit.id) && selected
+          ? `${unit.hp}/${unit.maxHp} · ${hitChance(current, selected, unit, fireMode)}% TO HIT`
+          : `${unit.hp}/${unit.maxHp} · NO SHOT`
+      return `<p class="hostile"><span>${unit.name}</span><b>${status}</b></p>`
+    }).join('')
     : '<p class="no-contact">No contacts in visual range.</p>'
+  const modeMarkup = (['snap', 'auto', 'aimed'] as const).map((id, index) => {
+    const mode = FIRE_MODES[id]
+    const affordable = (selected?.ap ?? 0) >= mode.cost
+    return `<button class="fire-mode ${fireMode === id ? 'active' : ''}" data-fire-mode="${id}" ${affordable ? '' : 'disabled'}><span>${index + 1} · ${mode.label.toUpperCase()}</span><b>${mode.cost} TU${mode.shots > 1 ? ` · ${mode.shots} RDS` : ''}</b></button>`
+  }).join('')
   const crewMarkup = campaign.crew.map(record => {
     const unit = current.units.find(candidate => candidate.id === record.id)
     const hp = unit?.hp ?? 0
-    return `<button class="unit ${hp <= 0 ? 'dead' : ''}" data-unit="${record.id}" ${hp <= 0 ? 'disabled' : ''}><span>${record.name}<small>${record.role}</small></span><b>${hp > 0 ? `${hp}/${record.maxHp} HP · ${unit!.ap} AP` : 'KIA'}</b></button>`
+    return `<button class="unit ${hp <= 0 ? 'dead' : ''}" data-unit="${record.id}" ${hp <= 0 ? 'disabled' : ''}><span>${record.name}<small>${record.role} · ${record.accuracy} ACC</small></span><b>${hp > 0 ? `${hp}/${record.maxHp} HP · ${unit!.ap} TU` : 'KIA'}</b></button>`
   }).join('')
   const deadline = current.objective.kind === 'rescue'
     ? `<section><h3>Deadline</h3><p class="deadline"><strong>TURN ${current.turn}/${current.objective.deadlineTurn}</strong><br>Reach ${current.objective.targetName} before enemy phase ${current.objective.deadlineTurn} ends.</p><p class="rescue-marker-legend">Survivor beacon</p></section>`
     : ''
-  hud.innerHTML = `<div><p class="kicker">MISSION // ${current.status.toUpperCase()}</p><h2>${current.status === 'playing' ? current.objective.label : terminalTitle(current)}</h2><p>Jump ${campaign.jump} · Hull ${campaign.hull}/${campaign.maxHull} · ${campaign.weaponDamage} weapon damage</p></div>${deadline}<section><h3>Selected</h3><p>${selected ? `<strong>${selected.name}</strong><br>${selected.role} · ${selected.ap} AP · ${selected.hp}/${selected.maxHp} HP` : 'Enemy activity…'}</p></section><section><h3>Crew manifest</h3>${crewMarkup}</section><section><h3>Hostiles</h3>${hostileMarkup}</section><ol class="log">${current.log.map(entry => `<li>${entry}</li>`).join('')}</ol>`
+  hud.innerHTML = `<div><p class="kicker">MISSION // ${current.status.toUpperCase()}</p><h2>${current.status === 'playing' ? current.objective.label : terminalTitle(current)}</h2><p>Jump ${campaign.jump} · Hull ${campaign.hull}/${campaign.maxHull} · ${campaign.weaponDamage} weapon damage</p></div>${deadline}<section><h3>Selected</h3><p>${selected ? `<strong>${selected.name}</strong><br>${selected.role} · ${selected.ap} TU · ${selected.hp}/${selected.maxHp} HP · ${selected.accuracy} ACC` : 'Enemy activity…'}</p><div class="fire-modes">${modeMarkup}</div></section><section><h3>Crew manifest</h3>${crewMarkup}</section><section><h3>Hostiles</h3>${hostileMarkup}</section><ol class="log">${current.log.map(entry => `<li>${entry}</li>`).join('')}</ol>`
   hud.querySelectorAll<HTMLButtonElement>('[data-unit]').forEach(button => button.onclick = () => {
     button.blur()
     controller.replace(selectUnit(state, button.dataset.unit!))
+  })
+  hud.querySelectorAll<HTMLButtonElement>('[data-fire-mode]').forEach(button => button.onclick = () => {
+    button.blur()
+    fireMode = button.dataset.fireMode as FireModeId
+    renderApp()
   })
 }
 
@@ -495,6 +517,7 @@ function enterMission() {
   const next = beginMission(campaign)
   if (next === campaign) return
   campaign = next
+  fireMode = 'snap'
   focusNextScreen = true
   focusNextTactical = true
   controller.replace(createGame(missionFor(campaign)))
@@ -542,6 +565,7 @@ function finishMission() {
 function restartCampaign() {
   controller.cancelPending()
   campaign = createRun()
+  fireMode = 'snap'
   focusNextScreen = true
   controller.replace(createGame(boardingMissionFor(campaign)))
 }
@@ -582,9 +606,12 @@ document.addEventListener('keydown', event => {
   } else if (directions[pressed]) {
     const selected = state.units.find(unit => unit.id === state.selectedId)
     if (selected) controller.replace(move(state, selected.x + directions[pressed][0], selected.y + directions[pressed][1]))
+  } else if (pressed === '1' || pressed === '2' || pressed === '3') {
+    fireMode = pressed === '1' ? 'snap' : pressed === '2' ? 'auto' : 'aimed'
+    renderApp()
   } else if (pressed === 'f' || pressed === 'enter') {
-    const targets = legalTargets(state)
-    if (targets[0]) controller.replace(attack(state, targets[0].id))
+    const targets = legalTargets(state, fireMode)
+    if (targets[0]) controller.replace(attack(state, targets[0].id, fireMode))
   } else if (pressed === 't') controller.end()
   else if (pressed === 'r') restartCampaign()
   else return

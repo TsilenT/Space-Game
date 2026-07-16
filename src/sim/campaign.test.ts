@@ -180,8 +180,8 @@ describe('abandoned moon and direct distress outcomes', () => {
       ...base,
       crew: [
         ...base.crew,
-        { id: 'reserve-a', name: 'Reserve A', role: 'Pilot', hp: 8, maxHp: 8 },
-        { id: 'reserve-b', name: 'Reserve B', role: 'Pilot', hp: 8, maxHp: 8 },
+        { id: 'reserve-a', name: 'Reserve A', role: 'Pilot', hp: 8, maxHp: 8, accuracy: 50 },
+        { id: 'reserve-b', name: 'Reserve B', role: 'Pilot', hp: 8, maxHp: 8, accuracy: 50 },
       ],
     }
     expect(resolveEncounter(full).crew).toHaveLength(CAMPAIGN_TUNING.rosterCap)
@@ -292,8 +292,8 @@ describe('starbase market and final-fuel arrival', () => {
       ...arrived,
       crew: [
         ...arrived.crew,
-        { id: 'reserve-a', name: 'Reserve A', role: 'Pilot', hp: 8, maxHp: 8 },
-        { id: 'reserve-b', name: 'Reserve B', role: 'Pilot', hp: 8, maxHp: 8 },
+        { id: 'reserve-a', name: 'Reserve A', role: 'Pilot', hp: 8, maxHp: 8, accuracy: 50 },
+        { id: 'reserve-b', name: 'Reserve B', role: 'Pilot', hp: 8, maxHp: 8, accuracy: 50 },
       ],
     }
     expect(hireMercenary(full)).toBe(full)
@@ -336,8 +336,8 @@ describe('contextual tactical missions', () => {
       ...arrived,
       crew: [
         ...arrived.crew.map(crew => crew.id === 'ada' ? { ...crew, hp: 0 } : crew),
-        { id: 'reserve-a', name: 'Reserve A', role: 'Pilot', hp: 7, maxHp: 8 },
-        { id: 'reserve-b', name: 'Reserve B', role: 'Mercenary', hp: 8, maxHp: 8 },
+        { id: 'reserve-a', name: 'Reserve A', role: 'Pilot', hp: 7, maxHp: 8, accuracy: 50 },
+        { id: 'reserve-b', name: 'Reserve B', role: 'Mercenary', hp: 8, maxHp: 8, accuracy: 50 },
       ],
     }
     const mission = missionFor(beginMission(expanded))
@@ -371,6 +371,49 @@ describe('contextual tactical missions', () => {
       hullDamage: 4,
     })
     expect(resolveMission(debrief, completed)).toBe(debrief)
+  })
+
+  it('improves a survivor\'s accuracy per landed hit, capped, and never trains the dead', () => {
+    const mission = beginMission(arrive(missionSeeds.pirates, 'distress'))
+    const completed = completedMission(mission, 'victory', { milo: 0 })
+    const trained = {
+      ...completed,
+      units: completed.units.map(unit => unit.id === 'ada'
+        ? { ...unit, hits: 3 }
+        : unit.id === 'soren'
+          ? { ...unit, hits: 30 }
+          : unit.id === 'milo'
+            ? { ...unit, hits: 2 }
+            : unit),
+    }
+    const debrief = resolveMission(mission, trained)
+
+    const before = Object.fromEntries(mission.crew.map(crew => [crew.id, crew.accuracy]))
+    expect(debrief.crew.find(crew => crew.id === 'ada')?.accuracy).toBe(before.ada + 6)
+    expect(debrief.crew.find(crew => crew.id === 'soren')?.accuracy).toBe(before.soren + CAMPAIGN_TUNING.accuracyGainCap)
+    expect(debrief.crew.find(crew => crew.id === 'milo')?.accuracy).toBe(before.milo)
+    expect(debrief.crew.find(crew => crew.id === 'imani')?.accuracy).toBe(before.imani)
+
+    const report = debrief.missionReport!.crew
+    expect(report.find(member => member.id === 'ada')).toMatchObject({ hitsLanded: 3, accuracyGained: 6 })
+    expect(report.find(member => member.id === 'soren')).toMatchObject({ hitsLanded: 30, accuracyGained: CAMPAIGN_TUNING.accuracyGainCap })
+    expect(report.find(member => member.id === 'milo')).toMatchObject({ hitsLanded: 2, accuracyGained: 0 })
+  })
+
+  it('caps trained accuracy at the stat ceiling', () => {
+    const arrived = arrive(missionSeeds.pirates, 'distress', {})
+    const veteran = {
+      ...arrived,
+      crew: arrived.crew.map(crew => crew.id === 'ada' ? { ...crew, accuracy: CAMPAIGN_TUNING.accuracyStatCap - 1 } : crew),
+    }
+    const mission = beginMission(veteran)
+    const completed = completedMission(mission, 'victory')
+    const trained = {
+      ...completed,
+      units: completed.units.map(unit => unit.id === 'ada' ? { ...unit, hits: 4 } : unit),
+    }
+    const debrief = resolveMission(mission, trained)
+    expect(debrief.crew.find(crew => crew.id === 'ada')?.accuracy).toBe(CAMPAIGN_TUNING.accuracyStatCap)
   })
 
   it('returns recovery to a new route without charging fuel and preserves wounds and death', () => {
