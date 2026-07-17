@@ -63,6 +63,14 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Soldiers improve by shooting: each landed hit banks +2 accuracy at mission end, capped at +8 per mission and a 90 accuracy ceiling; the dead train nothing. Starting crew accuracy is role-flavored (Marine 55, Scout 60, Engineer/Medic 45); recruits roll 40–60 seeded.
 - Enemies fire the same accuracy-rolled snap shots, so cover protects crew symmetrically, and they never fire from beyond vision range — any shooter that can hit a crew member is visible to that crew member in return. Crew may still take squad-sight shots at targets spotted by a teammate. Enemy fire modes beyond snap, ammunition, and reaction fire remain deferred.
 
+### Projectiles, stray fire, and friendly fire — July 17, 2026
+
+- Every round of fire is a physical projectile. The simulation records each shot (origin, aim point, actual impact, victim, deviation) and the renderer replays it: a tracer streaks from shooter to impact, hits flash with a floating damage number, and kills add an expanding ring. Input locks while shots resolve.
+- A missed round deflects by an angle scaled to how badly the to-hit roll failed (±4° base plus 0.3° per point of overshoot, side rolled separately), then travels up to four tiles past its aim point.
+- A stray round strikes the first thing in its deflected path: walls and closed doors, cover crates, enemies — or friendly troops. The intended target is excluded (that round already missed it). Friendly-fire hits deal full damage, can kill, persist like any wound, and never train the shooter's accuracy; a stray that happens to strike an enemy still counts as a hit for training.
+- Enemy strays use the identical ballistics, so a pirate missing one crew member can wing another.
+- All trajectories resolve against the existing seeded mission RNG, so replays of a seed remain identical. Shot spread beyond a single deflected ray, damage falloff along strays, and destructible terrain remain deferred.
+
 ## Open creative questions
 
 1. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?

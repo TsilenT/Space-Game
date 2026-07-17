@@ -43,6 +43,20 @@ export interface Unit extends Point {
   hits: number
 }
 
+/** One resolved round of fire, with everything the renderer needs to replay it. */
+export interface ShotResult {
+  readonly shooterId: string
+  readonly team: Team
+  readonly from: Point
+  readonly aimAt: Point
+  readonly impact: Point
+  readonly hitUnitId?: string
+  readonly damage: number
+  readonly killed: boolean
+  readonly deviationDeg: number
+  readonly struckObstacle: boolean
+}
+
 export interface GameState {
   mission: TacticalMission
   map: TacticalMap
@@ -57,6 +71,7 @@ export interface GameState {
   explored: CellKey[]
   openDoors: CellKey[]
   rngState: number
+  lastShots: readonly ShotResult[]
   log: string[]
 }
 
@@ -76,6 +91,9 @@ const COVER_PENALTY = 20
 const MIN_CHANCE = 5
 const MAX_CHANCE = 95
 const DEFAULT_MISSION_SEED = 1
+const BASE_DEVIATION_DEG = 4
+const DEVIATION_PER_OVERSHOOT = 0.3
+const STRAY_OVERSHOOT_TILES = 4
 
 const alive = (unit: Unit): boolean => unit.hp > 0
 const distance = (a: Point, b: Point): number => Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
@@ -101,6 +119,7 @@ export function createGame(mission: TacticalMission = BOARDING_MISSION): GameSta
     explored: [],
     openDoors: [],
     rngState: (mission.seed ?? DEFAULT_MISSION_SEED) >>> 0,
+    lastShots: [],
     log: [`Mission started. ${mission.objective.label}.`],
     units: mission.units.map(createUnit),
   }))
@@ -210,6 +229,7 @@ export function move(state: GameState, x: number, y: number): GameState {
   const opensDoor = doorCell?.door && !state.openDoors.includes(key(target))
   return reveal(evaluateMission({
     ...state,
+    lastShots: [],
     units: state.units.map(candidate => candidate.id === unit.id ? { ...candidate, x, y, ap: candidate.ap - cost } : candidate),
     openDoors: opensDoor ? [...state.openDoors, key(target)] : state.openDoors,
     log: [
@@ -294,6 +314,94 @@ export function legalTargets(state: GameState, mode: FireModeId = 'snap'): Unit[
   return state.units.filter(target => visible.has(key(target)) && canHit(state, attacker, target)).sort((a, b) => a.id.localeCompare(b.id))
 }
 
+interface StrayOutcome {
+  readonly impact: Point
+  readonly victimId?: string
+  readonly struckObstacle: boolean
+}
+
+/**
+ * Walk a deviated round from the shooter until it strikes a wall, a closed
+ * door, a crate, or a unit — friend or foe. The intended target is excluded:
+ * a round that already missed it streaks past.
+ */
+function traceStray(map: TacticalMap, units: readonly Unit[], shooter: Unit, aimAt: Point, angleRad: number, maxDist: number): StrayOutcome {
+  const cos = Math.cos(angleRad)
+  const sin = Math.sin(angleRad)
+  let lastInBounds: Point = { x: shooter.x, y: shooter.y }
+  let previousKey = key(shooter)
+
+  for (let travelled = 0.3; travelled <= maxDist; travelled += 0.2) {
+    const cell = { x: Math.round(shooter.x + cos * travelled), y: Math.round(shooter.y + sin * travelled) }
+    const cellKey = key(cell)
+    if (cellKey === previousKey) continue
+    previousKey = cellKey
+    if (cell.x === shooter.x && cell.y === shooter.y) continue
+
+    const mapCell = cellAt(map, cell)
+    if (!mapCell) return { impact: lastInBounds, struckObstacle: true }
+    lastInBounds = cell
+    if (mapCell.opaque || mapCell.cover) return { impact: cell, struckObstacle: true }
+
+    const victim = units.find(unit => alive(unit) && unit.x === cell.x && unit.y === cell.y
+      && unit.id !== shooter.id && !(unit.x === aimAt.x && unit.y === aimAt.y))
+    if (victim) return { impact: cell, victimId: victim.id, struckObstacle: false }
+  }
+
+  return { impact: lastInBounds, struckObstacle: false }
+}
+
+interface RoundOutcome {
+  readonly units: Unit[]
+  readonly rngState: number
+  readonly shot: ShotResult
+}
+
+/** Resolve one round of fire against the to-hit roll, tracing strays into the world. */
+function resolveRound(map: TacticalMap, units: Unit[], rngInput: number, shooter: Unit, target: Unit, chance: number, damage: number): RoundOutcome {
+  let rngState = nextSeed(rngInput)
+  const roll = (rngState / 0x1_0000_0000) * 100
+  const base = {
+    shooterId: shooter.id,
+    team: shooter.team,
+    from: { x: shooter.x, y: shooter.y },
+    aimAt: { x: target.x, y: target.y },
+    damage,
+  }
+
+  if (roll < chance) {
+    const hp = Math.max(0, target.hp - damage)
+    return {
+      rngState,
+      units: units.map(unit => unit.id === target.id ? { ...unit, hp } : unit),
+      shot: { ...base, impact: { x: target.x, y: target.y }, hitUnitId: target.id, killed: hp === 0, deviationDeg: 0, struckObstacle: false },
+    }
+  }
+
+  const overshoot = roll - chance
+  rngState = nextSeed(rngState)
+  const side = rngState / 0x1_0000_0000 < 0.5 ? -1 : 1
+  const deviationDeg = side * (BASE_DEVIATION_DEG + overshoot * DEVIATION_PER_OVERSHOOT)
+  const aim = Math.atan2(target.y - shooter.y, target.x - shooter.x)
+  const maxDist = Math.hypot(target.x - shooter.x, target.y - shooter.y) + STRAY_OVERSHOOT_TILES
+  const stray = traceStray(map, units, shooter, target, aim + (deviationDeg * Math.PI) / 180, maxDist)
+  const victim = stray.victimId ? units.find(unit => unit.id === stray.victimId)! : undefined
+  const hp = victim ? Math.max(0, victim.hp - damage) : 0
+  return {
+    rngState,
+    units: victim ? units.map(unit => unit.id === victim.id ? { ...unit, hp } : unit) : units,
+    shot: {
+      ...base,
+      impact: stray.impact,
+      hitUnitId: stray.victimId,
+      damage: victim ? damage : 0,
+      killed: victim ? hp === 0 : false,
+      deviationDeg,
+      struckObstacle: stray.struckObstacle,
+    },
+  }
+}
+
 export function attack(state: GameState, targetId: string, modeId: FireModeId = 'snap'): GameState {
   const attacker = state.units.find(unit => unit.id === state.selectedId)
   const target = legalTargets(state, modeId).find(unit => unit.id === targetId)
@@ -302,31 +410,46 @@ export function attack(state: GameState, targetId: string, modeId: FireModeId = 
   const mode = FIRE_MODES[modeId]
   const chance = hitChance(state, attacker, target, modeId)
   const damage = state.mission.crewDamage ?? DEFAULT_CREW_DAMAGE
+  const map = activeMap(state)
+  let units = state.units
   let rngState = state.rngState
-  let hitsLanded = 0
-  let remainingHp = target.hp
-  for (let shot = 0; shot < mode.shots && remainingHp > 0; shot++) {
-    rngState = nextSeed(rngState)
-    if ((rngState / 0x1_0000_0000) * 100 < chance) {
-      hitsLanded += 1
-      remainingHp = Math.max(0, remainingHp - damage)
+  const shots: ShotResult[] = []
+  const strayReports: string[] = []
+  let directHits = 0
+  let trainedHits = 0
+
+  for (let round = 0; round < mode.shots; round++) {
+    const liveTarget = units.find(unit => unit.id === target.id)!
+    if (!alive(liveTarget)) break
+    const shooter = units.find(unit => unit.id === attacker.id)!
+    const outcome = resolveRound(map, units, rngState, shooter, liveTarget, chance, damage)
+    units = outcome.units
+    rngState = outcome.rngState
+    shots.push(outcome.shot)
+    if (outcome.shot.hitUnitId === target.id) directHits += 1
+    if (outcome.shot.hitUnitId) {
+      const struck = units.find(unit => unit.id === outcome.shot.hitUnitId)!
+      if (struck.team === 'enemy') trainedHits += 1
+      if (outcome.shot.hitUnitId !== target.id) {
+        strayReports.push(`${attacker.name}'s ${mode.label.toLowerCase()} goes wide and hits ${struck.name} for ${damage} damage.`)
+      }
     }
   }
 
-  const report = hitsLanded === 0
-    ? `${attacker.name}'s ${mode.label.toLowerCase()} misses ${target.name} (${chance}%).`
+  const label = mode.label.toLowerCase()
+  const report = directHits === 0
+    ? `${attacker.name}'s ${label} misses ${target.name} (${chance}%).`
     : mode.shots > 1
-      ? `${attacker.name}'s ${mode.label.toLowerCase()} hits ${target.name} ${hitsLanded}x for ${hitsLanded * damage} damage (${chance}%).`
-      : `${attacker.name}'s ${mode.label.toLowerCase()} hits ${target.name} for ${damage} damage (${chance}%).`
+      ? `${attacker.name}'s ${label} hits ${target.name} ${directHits}x for ${directHits * damage} damage (${chance}%).`
+      : `${attacker.name}'s ${label} hits ${target.name} for ${damage} damage (${chance}%).`
   return reveal(evaluateMission({
     ...state,
     rngState,
-    units: state.units.map(unit => unit.id === attacker.id
-      ? { ...unit, ap: unit.ap - mode.cost, hits: unit.hits + hitsLanded }
-      : unit.id === target.id
-        ? { ...unit, hp: remainingHp }
-        : unit),
-    log: [report, ...state.log].slice(0, 5),
+    lastShots: shots,
+    units: units.map(unit => unit.id === attacker.id
+      ? { ...unit, ap: unit.ap - mode.cost, hits: unit.hits + trainedHits }
+      : unit),
+    log: [report, ...strayReports, ...state.log].slice(0, 5),
   }))
 }
 
@@ -361,7 +484,7 @@ function pathDistance(state: GameState, start: Point, end: Point, ignore?: strin
 
 export function enemyTurn(input: GameState): GameState {
   if (input.phase !== 'enemy') return input
-  let state = evaluateMission(input)
+  let state = evaluateMission({ ...input, lastShots: [] })
   if (state.status !== 'playing') return reveal(state)
 
   const enemies = state.units.filter(unit => unit.team === 'enemy' && alive(unit)).sort((a, b) => a.id.localeCompare(b.id))
@@ -378,18 +501,21 @@ export function enemyTurn(input: GameState): GameState {
     const attackTarget = targets.find(target => distance(current, target) <= state.visionRange && canHit(state, current, target))
     if (attackTarget) {
       const chance = hitChance(state, current, attackTarget, 'snap')
-      const rngState = nextSeed(state.rngState)
-      const landed = (rngState / 0x1_0000_0000) * 100 < chance
+      const outcome = resolveRound(activeMap(state), state.units, state.rngState, current, attackTarget, chance, ENEMY_DAMAGE)
+      const strayVictim = outcome.shot.hitUnitId && outcome.shot.hitUnitId !== attackTarget.id
+        ? outcome.units.find(unit => unit.id === outcome.shot.hitUnitId)!
+        : undefined
       state = {
         ...state,
-        rngState,
-        units: landed
-          ? state.units.map(unit => unit.id === attackTarget.id ? { ...unit, hp: Math.max(0, unit.hp - ENEMY_DAMAGE) } : unit)
-          : state.units,
+        rngState: outcome.rngState,
+        units: outcome.units,
+        lastShots: [...state.lastShots, outcome.shot],
         log: [
-          landed
+          outcome.shot.hitUnitId === attackTarget.id
             ? `${current.name} hits ${attackTarget.name} for ${ENEMY_DAMAGE} damage.`
-            : `${current.name} fires at ${attackTarget.name} and misses.`,
+            : strayVictim
+              ? `${current.name} fires at ${attackTarget.name}, misses, and hits ${strayVictim.name} for ${ENEMY_DAMAGE} damage.`
+              : `${current.name} fires at ${attackTarget.name} and misses.`,
           ...state.log,
         ].slice(0, 5),
       }

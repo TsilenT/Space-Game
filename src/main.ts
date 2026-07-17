@@ -29,7 +29,7 @@ import {
   type SystemKind,
 } from './sim/campaign'
 import { revealedSystemIds, systemById, type StarSystem } from './sim/galaxy'
-import { FIRE_MODES, attack, createGame, currentVisibility, type FireModeId, type GameState, hitChance, legalMoves, legalTargets, move, selectUnit } from './sim/game'
+import { FIRE_MODES, attack, createGame, currentVisibility, type FireModeId, type GameState, hitChance, legalMoves, legalTargets, move, selectUnit, type ShotResult } from './sim/game'
 import { cellAt, isWalkable, key } from './sim/map'
 import { TurnController } from './turnController'
 
@@ -59,6 +59,8 @@ let campaign = createRun()
 let state = createGame(boardingMissionFor(campaign))
 let controller: TurnController
 let fireMode: FireModeId = 'snap'
+let lastPlayedShots: readonly ShotResult[] = []
+let animating = false
 let sceneReady = false
 let focusNextScreen = true
 let focusNextTactical = false
@@ -99,7 +101,7 @@ class TacticalScene extends Phaser.Scene {
   }
 
   click(px: number, py: number) {
-    if (transitionLocked || campaign.phase !== 'mission' || state.phase !== 'player' || state.status !== 'playing') return
+    if (animating || transitionLocked || campaign.phase !== 'mission' || state.phase !== 'player' || state.status !== 'playing') return
     const x = Math.floor((px - OX) / CELL), y = Math.floor((py - OY) / CELL)
     if (!isWalkable(state.map, { x, y })) return
     const visible = new Set(currentVisibility(state).map(key))
@@ -113,6 +115,8 @@ class TacticalScene extends Phaser.Scene {
   draw() {
     if (!sceneReady || campaign.phase !== 'mission') return
     this.children.removeAll()
+    const pendingShots = state.lastShots.length > 0 && state.lastShots !== lastPlayedShots ? state.lastShots : []
+    const dyingIds = new Set(pendingShots.filter(shot => shot.killed && shot.hitUnitId).map(shot => shot.hitUnitId!))
     const graphics = this.add.graphics()
     const visible = new Set(currentVisibility(state).map(key))
     const explored = new Set(state.explored)
@@ -157,7 +161,7 @@ class TacticalScene extends Phaser.Scene {
       graphics.lineStyle(3, 0xf1bd5b, 1).strokeCircle(cx, cy, 20)
       this.add.text(cx, cy, 'SOS', { fontFamily: 'monospace', fontSize: '11px', fontStyle: 'bold', color: '#f1bd5b' }).setOrigin(.5)
     }
-    for (const unit of state.units.filter(unit => unit.hp > 0 && (unit.team === 'crew' || visible.has(key(unit))))) {
+    for (const unit of state.units.filter(unit => (unit.hp > 0 || dyingIds.has(unit.id)) && (unit.team === 'crew' || visible.has(key(unit))))) {
       const cx = OX + unit.x * CELL + 28, cy = OY + unit.y * CELL + 28
       if (unit.id === state.selectedId) graphics.lineStyle(3, 0xffffff, 1).strokeCircle(cx, cy, 22)
       if (legalTargetIds.has(unit.id)) graphics.lineStyle(3, 0xf1bd5b, 1).strokeCircle(cx, cy, 22)
@@ -173,12 +177,67 @@ class TacticalScene extends Phaser.Scene {
     })
     const deadline = state.objective.kind === 'rescue' ? ` / ${String(state.objective.deadlineTurn).padStart(2, '0')}` : ''
     this.add.text(52, 28, `TURN ${String(state.turn).padStart(2, '0')}${deadline}  //  ${state.phase.toUpperCase()} PHASE`, { fontFamily: 'monospace', fontSize: '18px', color: state.phase === 'player' ? '#63e3d6' : '#ff6670' })
-    if (state.status !== 'playing') {
+    if (state.status !== 'playing' && pendingShots.length === 0) {
       graphics.fillStyle(0x02060b, .86).fillRect(0, 0, 800, 600)
       this.add.text(400, 260, terminalTitle(state), { fontFamily: 'monospace', fontSize: '32px', fontStyle: 'bold', color: state.status === 'victory' ? '#63e3d6' : '#ff6670' }).setOrigin(.5)
       this.add.text(400, 305, terminalSubtitle(state), { fontFamily: 'monospace', fontSize: '15px', color: '#c7d6df' }).setOrigin(.5)
     }
     updateTacticalHud(state)
+
+    if (pendingShots.length > 0) {
+      lastPlayedShots = state.lastShots
+      animating = true
+      this.animateShots(pendingShots, () => {
+        animating = false
+        renderApp()
+      })
+    } else {
+      lastPlayedShots = state.lastShots
+    }
+  }
+
+  animateShots(shots: readonly ShotResult[], done: () => void) {
+    const center = (point: { x: number; y: number }) => ({ x: OX + point.x * CELL + 28, y: OY + point.y * CELL + 28 })
+    const playNext = (index: number) => {
+      if (index >= shots.length) {
+        done()
+        return
+      }
+      const shot = shots[index]
+      const from = center(shot.from)
+      const to = center(shot.impact)
+      const tracer = this.add.circle(from.x, from.y, 5, shot.team === 'crew' ? 0xd9fff7 : 0xffb0b6, 1)
+      const flight = Math.max(90, Math.hypot(to.x - from.x, to.y - from.y) * 0.85)
+      this.tweens.add({
+        targets: tracer,
+        x: to.x,
+        y: to.y,
+        duration: flight,
+        ease: 'Linear',
+        onComplete: () => {
+          tracer.destroy()
+          this.impactEffect(shot, to)
+          this.time.delayedCall(shot.hitUnitId ? 280 : 150, () => playNext(index + 1))
+        },
+      })
+    }
+    playNext(0)
+  }
+
+  impactEffect(shot: ShotResult, at: { x: number; y: number }) {
+    if (shot.hitUnitId) {
+      const flash = this.add.circle(at.x, at.y, 12, 0xffffff, 0.95)
+      this.tweens.add({ targets: flash, scale: shot.killed ? 2.6 : 1.8, alpha: 0, duration: shot.killed ? 380 : 240, onComplete: () => flash.destroy() })
+      const text = this.add.text(at.x, at.y - 16, `-${shot.damage}`, { fontFamily: 'monospace', fontSize: '17px', fontStyle: 'bold', color: '#ff6670' }).setOrigin(.5)
+      this.tweens.add({ targets: text, y: at.y - 44, alpha: 0, duration: 620, onComplete: () => text.destroy() })
+      if (shot.killed) {
+        const ring = this.add.circle(at.x, at.y, 16, 0x000000, 0).setStrokeStyle(3, 0xff5c68, 1)
+        this.tweens.add({ targets: ring, scale: 2.4, alpha: 0, duration: 430, onComplete: () => ring.destroy() })
+      }
+    } else if (shot.struckObstacle) {
+      const spark = this.add.circle(at.x, at.y, 7, 0xc9d2d8, 0.85)
+      this.tweens.add({ targets: spark, scale: 1.7, alpha: 0, duration: 220, onComplete: () => spark.destroy() })
+    }
   }
 }
 
@@ -513,11 +572,18 @@ function lockTransition(action: () => void) {
   window.setTimeout(() => { transitionLocked = false }, 300)
 }
 
+function resetShotAnimation() {
+  if (sceneReady) scene.tweens.killAll()
+  animating = false
+  lastPlayedShots = []
+}
+
 function enterMission() {
   const next = beginMission(campaign)
   if (next === campaign) return
   campaign = next
   fireMode = 'snap'
+  resetShotAnimation()
   focusNextScreen = true
   focusNextTactical = true
   controller.replace(createGame(missionFor(campaign)))
@@ -566,6 +632,7 @@ function restartCampaign() {
   controller.cancelPending()
   campaign = createRun()
   fireMode = 'snap'
+  resetShotAnimation()
   focusNextScreen = true
   controller.replace(createGame(boardingMissionFor(campaign)))
 }
@@ -576,18 +643,20 @@ function configureTacticalActions() {
   restartButton.textContent = 'NEW RUN'
   endTurnButton.onclick = () => {
     endTurnButton.blur()
+    if (animating) return
     if (complete) finishMission()
     else controller.end()
   }
   restartButton.onclick = () => {
     restartButton.blur()
+    if (animating) return
     restartCampaign()
   }
 }
 
 document.addEventListener('keydown', event => {
   const target = event.target as HTMLElement
-  if (campaign.phase !== 'mission' || target.matches('input, textarea, select, button, a') || target.isContentEditable || event.altKey || event.ctrlKey || event.metaKey) return
+  if (animating || campaign.phase !== 'mission' || target.matches('input, textarea, select, button, a') || target.isContentEditable || event.altKey || event.ctrlKey || event.metaKey) return
   const pressed = event.key.toLowerCase()
   if (state.status !== 'playing') {
     if (pressed === 'enter') finishMission()
