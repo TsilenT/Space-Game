@@ -177,6 +177,89 @@ describe('fire modes and accuracy', () => {
   })
 })
 
+describe('projectiles and stray fire', () => {
+  it('records a direct hit shot for the renderer, including kills', () => {
+    const game = createGame(fireMission())
+    const hit = attack({ ...game, rngState: RNG_SURE_HIT }, 'wraith-1', 'aimed')
+    expect(hit.lastShots).toHaveLength(1)
+    expect(hit.lastShots[0]).toMatchObject({
+      shooterId: 'ada',
+      team: 'crew',
+      from: { x: 0, y: 1 },
+      aimAt: { x: 4, y: 1 },
+      impact: { x: 4, y: 1 },
+      hitUnitId: 'wraith-1',
+      damage: 3,
+      killed: false,
+      deviationDeg: 0,
+      struckObstacle: false,
+    })
+
+    const wounded = { ...game, rngState: RNG_SURE_HIT, units: game.units.map(u => u.id === 'wraith-1' ? { ...u, hp: 3 } : u) }
+    const kill = attack(wounded, 'wraith-1', 'aimed')
+    expect(kill.lastShots[0].killed).toBe(true)
+    expect(unit(kill, 'wraith-1').hp).toBe(0)
+  })
+
+  it('deflects a miss by an angle scaled to how badly it missed, until it strikes the hull', () => {
+    const mission = fireMission()
+    const corridor: TacticalMission = {
+      ...mission,
+      map: defineTacticalMap({ rows: ['..........'], legend: rangeLegend }),
+      crewSpawns: [{ x: 0, y: 0 }],
+      units: mission.units.map(u => ({ ...u, y: 0 })),
+    }
+    const game = createGame(corridor)
+    const missed = attack({ ...game, rngState: RNG_SURE_MISS }, 'wraith-1', 'snap')
+
+    expect(unit(missed, 'wraith-1').hp).toBe(12)
+    expect(unit(missed, 'ada').hits).toBe(0)
+    expect(missed.lastShots).toHaveLength(1)
+    const shot = missed.lastShots[0]
+    expect(shot.hitUnitId).toBeUndefined()
+    expect(shot.damage).toBe(0)
+    expect(shot.struckObstacle).toBe(true)
+    expect(Math.abs(shot.deviationDeg)).toBeGreaterThan(0)
+    expect(shot.impact).not.toEqual({ x: 4, y: 0 })
+  })
+
+  it('lets a stray round hit a friendly standing beside the fire lane', () => {
+    const wide: TacticalMission = {
+      id: 'stray-test',
+      objective: { kind: 'eliminate', label: 'Test stray fire' },
+      visionRange: 8,
+      map: defineTacticalMap({ rows: ['..........', '..........', '..........', '..........', '..........'], legend: rangeLegend }),
+      crewSpawns: [{ x: 0, y: 2 }, { x: 2, y: 1 }, { x: 2, y: 3 }],
+      units: [
+        { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 2, hp: 8, ap: 12, accuracy: 70 },
+        { id: 'milo', name: 'Milo', role: 'Engineer', team: 'crew', x: 2, y: 1, hp: 8, ap: 12, accuracy: 45 },
+        { id: 'imani', name: 'Imani', role: 'Medic', team: 'crew', x: 2, y: 3, hp: 8, ap: 12, accuracy: 45 },
+        { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 6, y: 2, hp: 12, ap: 12, accuracy: 45 },
+      ],
+    }
+    const game = createGame(wide)
+    const missed = attack({ ...game, rngState: RNG_SURE_MISS }, 'wraith-1', 'snap')
+
+    expect(unit(missed, 'wraith-1').hp).toBe(12)
+    const shot = missed.lastShots[0]
+    expect(['milo', 'imani']).toContain(shot.hitUnitId)
+    const victim = missed.units.find(u => u.id === shot.hitUnitId)!
+    expect(victim.hp).toBe(5)
+    expect(shot.impact).toEqual({ x: victim.x, y: victim.y })
+    // Friendly fire never trains the shooter.
+    expect(unit(missed, 'ada').hits).toBe(0)
+    expect(missed.log[1]).toContain('goes wide and hits')
+  })
+
+  it('clears the shot record on movement', () => {
+    const game = createGame(fireMission())
+    const hit = attack({ ...game, rngState: RNG_SURE_HIT }, 'wraith-1', 'snap')
+    expect(hit.lastShots).toHaveLength(1)
+    const moved = move(hit, 0, 0)
+    expect(moved.lastShots).toEqual([])
+  })
+})
+
 const doorLegend = {
   '.': { room: 'Deck', walkable: true, opaque: false },
   '#': { room: 'Hull', walkable: false, opaque: true },
