@@ -51,6 +51,8 @@ export interface ShotResult {
   readonly aimAt: Point
   readonly impact: Point
   readonly hitUnitId?: string
+  readonly hitStructureAt?: Point
+  readonly structureDestroyed?: boolean
   readonly damage: number
   readonly killed: boolean
   readonly deviationDeg: number
@@ -70,6 +72,7 @@ export interface GameState {
   selectedId?: string
   explored: CellKey[]
   openDoors: CellKey[]
+  structureHp: Readonly<Record<CellKey, number>>
   rngState: number
   lastShots: readonly ShotResult[]
   log: string[]
@@ -118,6 +121,7 @@ export function createGame(mission: TacticalMission = BOARDING_MISSION): GameSta
     selectedId: mission.units.find(unit => unit.team === 'crew')?.id,
     explored: [],
     openDoors: [],
+    structureHp: Object.fromEntries(mission.map.cells.filter(cell => cell.structure).map(cell => [key(cell), cell.structure!.hp])),
     rngState: (mission.seed ?? DEFAULT_MISSION_SEED) >>> 0,
     lastShots: [],
     log: [`Mission started. ${mission.objective.label}.`],
@@ -125,10 +129,27 @@ export function createGame(mission: TacticalMission = BOARDING_MISSION): GameSta
   }))
 }
 
+function isDestroyed(state: GameState, cellKey: CellKey): boolean {
+  return state.structureHp[cellKey] !== undefined && state.structureHp[cellKey] <= 0
+}
+
 function activeMap(state: GameState): TacticalMap {
-  if (state.openDoors.length === 0) return state.map
   const open = new Set(state.openDoors)
-  return { ...state.map, cells: state.map.cells.map(cell => cell.door && open.has(key(cell)) ? { ...cell, opaque: false } : cell) }
+  const anyDestroyed = Object.values(state.structureHp).some(hp => hp <= 0)
+  if (open.size === 0 && !anyDestroyed) return state.map
+  return {
+    ...state.map,
+    cells: state.map.cells.map(cell => {
+      if (cell.door && open.has(key(cell))) return { ...cell, opaque: false }
+      if (cell.structure && isDestroyed(state, key(cell))) return { ...cell, walkable: true, cover: false }
+      return cell
+    }),
+  }
+}
+
+/** Walkability including opened doors and destroyed structures. */
+export function isCellWalkable(state: GameState, point: Point): boolean {
+  return isWalkable(activeMap(state), point)
 }
 
 export function currentVisibility(state: GameState): Point[] {
@@ -178,6 +199,7 @@ export function legalMoves(state: GameState): Point[] {
   const unit = state.units.find(candidate => candidate.id === state.selectedId)
   if (!unit || state.phase !== 'player' || state.status !== 'playing' || !alive(unit)) return []
 
+  const map = activeMap(state)
   const visible = new Set(currentVisibility(state).map(key))
   const seen = new Map<CellKey, number>([[key(unit), 0]])
   const queue: Point[] = [unit]
@@ -188,7 +210,7 @@ export function legalMoves(state: GameState): Point[] {
     const cost = seen.get(key(point))!
     if (cost + MOVE_COST > unit.ap) continue
 
-    for (const neighbor of neighbors(state.map, point)) {
+    for (const neighbor of neighbors(map, point)) {
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || !visible.has(neighborKey) || occupied(state, neighbor, unit.id)) continue
       seen.set(neighborKey, cost + MOVE_COST)
@@ -201,6 +223,7 @@ export function legalMoves(state: GameState): Point[] {
 }
 
 function shortestDistance(state: GameState, start: Point, end: Point, ignore?: string): number {
+  const map = activeMap(state)
   const allowed = new Set(currentVisibility(state).map(key))
   const queue: Array<[Point, number]> = [[start, 0]]
   const seen = new Set<CellKey>([key(start)])
@@ -208,7 +231,7 @@ function shortestDistance(state: GameState, start: Point, end: Point, ignore?: s
   while (queue.length > 0) {
     const [point, cost] = queue.shift()!
     if (key(point) === key(end)) return cost
-    for (const neighbor of neighbors(state.map, point)) {
+    for (const neighbor of neighbors(map, point)) {
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || !allowed.has(neighborKey) || occupied(state, neighbor, ignore)) continue
       seen.add(neighborKey)
@@ -297,7 +320,7 @@ function targetInCover(state: GameState, shooter: Point, target: Point): boolean
     dx !== 0 ? { x: target.x + dx, y: target.y } : undefined,
     dy !== 0 ? { x: target.x, y: target.y + dy } : undefined,
   ]
-  return shields.some(cell => cell && cellAt(state.map, cell)?.cover === true)
+  return shields.some(cell => cell && cellAt(activeMap(state), cell)?.cover === true)
 }
 
 export function hitChance(state: GameState, attacker: Unit, target: Unit, mode: FireModeId): number {
@@ -318,12 +341,14 @@ interface StrayOutcome {
   readonly impact: Point
   readonly victimId?: string
   readonly struckObstacle: boolean
+  readonly structureAt?: Point
 }
 
 /**
  * Walk a deviated round from the shooter until it strikes a wall, a closed
- * door, a crate, or a unit — friend or foe. The intended target is excluded:
- * a round that already missed it streaks past.
+ * door, a structure, or a unit — friend or foe. The intended target is
+ * excluded: a round that already missed it streaks past. A struck structure
+ * is reported so the round can chew into it.
  */
 function traceStray(map: TacticalMap, units: readonly Unit[], shooter: Unit, aimAt: Point, angleRad: number, maxDist: number): StrayOutcome {
   const cos = Math.cos(angleRad)
@@ -341,7 +366,9 @@ function traceStray(map: TacticalMap, units: readonly Unit[], shooter: Unit, aim
     const mapCell = cellAt(map, cell)
     if (!mapCell) return { impact: lastInBounds, struckObstacle: true }
     lastInBounds = cell
-    if (mapCell.opaque || mapCell.cover) return { impact: cell, struckObstacle: true }
+    if (mapCell.opaque || mapCell.cover) {
+      return { impact: cell, struckObstacle: true, structureAt: mapCell.structure && mapCell.cover ? cell : undefined }
+    }
 
     const victim = units.find(unit => alive(unit) && unit.x === cell.x && unit.y === cell.y
       && unit.id !== shooter.id && !(unit.x === aimAt.x && unit.y === aimAt.y))
@@ -353,12 +380,13 @@ function traceStray(map: TacticalMap, units: readonly Unit[], shooter: Unit, aim
 
 interface RoundOutcome {
   readonly units: Unit[]
+  readonly structureHp: Readonly<Record<CellKey, number>>
   readonly rngState: number
   readonly shot: ShotResult
 }
 
 /** Resolve one round of fire against the to-hit roll, tracing strays into the world. */
-function resolveRound(map: TacticalMap, units: Unit[], rngInput: number, shooter: Unit, target: Unit, chance: number, damage: number): RoundOutcome {
+function resolveRound(map: TacticalMap, units: Unit[], structureHp: Readonly<Record<CellKey, number>>, rngInput: number, shooter: Unit, target: Unit, chance: number, damage: number): RoundOutcome {
   let rngState = nextSeed(rngInput)
   const roll = (rngState / 0x1_0000_0000) * 100
   const base = {
@@ -373,6 +401,7 @@ function resolveRound(map: TacticalMap, units: Unit[], rngInput: number, shooter
     const hp = Math.max(0, target.hp - damage)
     return {
       rngState,
+      structureHp,
       units: units.map(unit => unit.id === target.id ? { ...unit, hp } : unit),
       shot: { ...base, impact: { x: target.x, y: target.y }, hitUnitId: target.id, killed: hp === 0, deviationDeg: 0, struckObstacle: false },
     }
@@ -387,14 +416,20 @@ function resolveRound(map: TacticalMap, units: Unit[], rngInput: number, shooter
   const stray = traceStray(map, units, shooter, target, aim + (deviationDeg * Math.PI) / 180, maxDist)
   const victim = stray.victimId ? units.find(unit => unit.id === stray.victimId)! : undefined
   const hp = victim ? Math.max(0, victim.hp - damage) : 0
+  const structureKey = stray.structureAt ? key(stray.structureAt) : undefined
+  const struckStructure = structureKey !== undefined && (structureHp[structureKey] ?? 0) > 0
+  const structureLeft = struckStructure ? Math.max(0, structureHp[structureKey!] - damage) : 0
   return {
     rngState,
+    structureHp: struckStructure ? { ...structureHp, [structureKey!]: structureLeft } : structureHp,
     units: victim ? units.map(unit => unit.id === victim.id ? { ...unit, hp } : unit) : units,
     shot: {
       ...base,
       impact: stray.impact,
       hitUnitId: stray.victimId,
-      damage: victim ? damage : 0,
+      hitStructureAt: struckStructure ? stray.structureAt : undefined,
+      structureDestroyed: struckStructure ? structureLeft === 0 : undefined,
+      damage: victim || struckStructure ? damage : 0,
       killed: victim ? hp === 0 : false,
       deviationDeg,
       struckObstacle: stray.struckObstacle,
@@ -412,6 +447,7 @@ export function attack(state: GameState, targetId: string, modeId: FireModeId = 
   const damage = state.mission.crewDamage ?? DEFAULT_CREW_DAMAGE
   const map = activeMap(state)
   let units = state.units
+  let structureHp = state.structureHp
   let rngState = state.rngState
   const shots: ShotResult[] = []
   const strayReports: string[] = []
@@ -422,8 +458,9 @@ export function attack(state: GameState, targetId: string, modeId: FireModeId = 
     const liveTarget = units.find(unit => unit.id === target.id)!
     if (!alive(liveTarget)) break
     const shooter = units.find(unit => unit.id === attacker.id)!
-    const outcome = resolveRound(map, units, rngState, shooter, liveTarget, chance, damage)
+    const outcome = resolveRound(map, units, structureHp, rngState, shooter, liveTarget, chance, damage)
     units = outcome.units
+    structureHp = outcome.structureHp
     rngState = outcome.rngState
     shots.push(outcome.shot)
     if (outcome.shot.hitUnitId === target.id) directHits += 1
@@ -433,6 +470,11 @@ export function attack(state: GameState, targetId: string, modeId: FireModeId = 
       if (outcome.shot.hitUnitId !== target.id) {
         strayReports.push(`${attacker.name}'s ${mode.label.toLowerCase()} goes wide and hits ${struck.name} for ${damage} damage.`)
       }
+    } else if (outcome.shot.hitStructureAt) {
+      const struckCell = cellAt(state.map, outcome.shot.hitStructureAt)!
+      strayReports.push(outcome.shot.structureDestroyed
+        ? `${attacker.name}'s stray round destroys the ${struckCell.structure!.name}.`
+        : `${attacker.name}'s ${mode.label.toLowerCase()} goes wide and slams into the ${struckCell.structure!.name}.`)
     }
   }
 
@@ -445,11 +487,77 @@ export function attack(state: GameState, targetId: string, modeId: FireModeId = 
   return reveal(evaluateMission({
     ...state,
     rngState,
+    structureHp,
     lastShots: shots,
     units: units.map(unit => unit.id === attacker.id
       ? { ...unit, ap: unit.ap - mode.cost, hits: unit.hits + trainedHits }
       : unit),
     log: [report, ...strayReports, ...state.log].slice(0, 5),
+  }))
+}
+
+/** True when the selected soldier can deliberately fire on the structure at this cell. */
+export function canTargetStructure(state: GameState, point: Point, modeId: FireModeId = 'snap'): boolean {
+  const attacker = state.units.find(unit => unit.id === state.selectedId)
+  const cell = cellAt(state.map, point)
+  return state.phase === 'player'
+    && state.status === 'playing'
+    && attacker !== undefined
+    && attacker.team === 'crew'
+    && alive(attacker)
+    && attacker.ap >= FIRE_MODES[modeId].cost
+    && cell?.structure !== undefined
+    && (state.structureHp[key(point)] ?? 0) > 0
+    && distance(attacker, point) <= ATTACK_RANGE
+    && isCellVisible(state, point)
+    && hasLineOfSight(activeMap(state), attacker, point)
+}
+
+/**
+ * Fire deliberately at a structure. Furniture does not dodge: every round
+ * hits, so easy pieces fall in 2-3 rifle rounds and tough ones in 4-5.
+ */
+export function attackStructure(state: GameState, x: number, y: number, modeId: FireModeId = 'snap'): GameState {
+  const point = { x, y }
+  if (!canTargetStructure(state, point, modeId)) return state
+  const attacker = state.units.find(unit => unit.id === state.selectedId)!
+  const cell = cellAt(state.map, point)!
+  const mode = FIRE_MODES[modeId]
+  const damage = state.mission.crewDamage ?? DEFAULT_CREW_DAMAGE
+  const cellKey = key(point)
+
+  let remaining = state.structureHp[cellKey]
+  const shots: ShotResult[] = []
+  for (let round = 0; round < mode.shots && remaining > 0; round++) {
+    remaining = Math.max(0, remaining - damage)
+    shots.push({
+      shooterId: attacker.id,
+      team: attacker.team,
+      from: { x: attacker.x, y: attacker.y },
+      aimAt: point,
+      impact: point,
+      hitStructureAt: point,
+      structureDestroyed: remaining === 0,
+      damage,
+      killed: false,
+      deviationDeg: 0,
+      struckObstacle: false,
+    })
+  }
+
+  const dealt = shots.length * damage
+  const label = mode.label.toLowerCase()
+  return reveal(evaluateMission({
+    ...state,
+    structureHp: { ...state.structureHp, [cellKey]: remaining },
+    lastShots: shots,
+    units: state.units.map(unit => unit.id === attacker.id ? { ...unit, ap: unit.ap - mode.cost } : unit),
+    log: [
+      remaining === 0
+        ? `${attacker.name}'s ${label} destroys the ${cell.structure!.name}. The wreckage is passable.`
+        : `${attacker.name}'s ${label} tears into the ${cell.structure!.name} (${dealt} damage).`,
+      ...state.log,
+    ].slice(0, 5),
   }))
 }
 
@@ -465,13 +573,14 @@ export function endTurn(state: GameState): GameState {
 }
 
 function pathDistance(state: GameState, start: Point, end: Point, ignore?: string): number {
+  const map = activeMap(state)
   const queue: Array<[Point, number]> = [[start, 0]]
   const seen = new Set<CellKey>([key(start)])
 
   while (queue.length > 0) {
     const [point, cost] = queue.shift()!
     if (key(point) === key(end)) return cost
-    for (const neighbor of neighbors(state.map, point)) {
+    for (const neighbor of neighbors(map, point)) {
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || (neighborKey !== key(end) && occupied(state, neighbor, ignore))) continue
       seen.add(neighborKey)
@@ -501,27 +610,31 @@ export function enemyTurn(input: GameState): GameState {
     const attackTarget = targets.find(target => distance(current, target) <= state.visionRange && canHit(state, current, target))
     if (attackTarget) {
       const chance = hitChance(state, current, attackTarget, 'snap')
-      const outcome = resolveRound(activeMap(state), state.units, state.rngState, current, attackTarget, chance, ENEMY_DAMAGE)
+      const outcome = resolveRound(activeMap(state), state.units, state.structureHp, state.rngState, current, attackTarget, chance, ENEMY_DAMAGE)
       const strayVictim = outcome.shot.hitUnitId && outcome.shot.hitUnitId !== attackTarget.id
         ? outcome.units.find(unit => unit.id === outcome.shot.hitUnitId)!
         : undefined
+      const strayStructure = outcome.shot.hitStructureAt ? cellAt(state.map, outcome.shot.hitStructureAt)?.structure : undefined
       state = {
         ...state,
         rngState: outcome.rngState,
         units: outcome.units,
+        structureHp: outcome.structureHp,
         lastShots: [...state.lastShots, outcome.shot],
         log: [
           outcome.shot.hitUnitId === attackTarget.id
             ? `${current.name} hits ${attackTarget.name} for ${ENEMY_DAMAGE} damage.`
             : strayVictim
               ? `${current.name} fires at ${attackTarget.name}, misses, and hits ${strayVictim.name} for ${ENEMY_DAMAGE} damage.`
-              : `${current.name} fires at ${attackTarget.name} and misses.`,
+              : strayStructure
+                ? `${current.name} fires at ${attackTarget.name}, misses, and ${outcome.shot.structureDestroyed ? 'destroys' : 'hits'} the ${strayStructure.name}.`
+                : `${current.name} fires at ${attackTarget.name} and misses.`,
           ...state.log,
         ].slice(0, 5),
       }
     } else {
       const wasVisible = isCellVisible(state, current)
-      const options = neighbors(state.map, current)
+      const options = neighbors(activeMap(state), current)
         .filter(point => !occupied(state, point, current.id))
         .sort((a, b) => pathDistance(state, a, nearest, current.id) - pathDistance(state, b, nearest, current.id) || a.y - b.y || a.x - b.x)
       const destination = options[0]

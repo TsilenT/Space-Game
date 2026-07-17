@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FIRE_MODES, TURN_TIME_UNITS, attack, createGame, currentVisibility, enemyTurn, endTurn, hitChance, legalMoves, legalTargets, move, selectUnit, type Unit } from './game'
+import { FIRE_MODES, TURN_TIME_UNITS, attack, attackStructure, canTargetStructure, createGame, currentVisibility, enemyTurn, endTurn, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type Unit } from './game'
 import { defineTacticalMap, key, type TacticalMission } from './map'
 
 // Hunted LCG states: the next roll(s) from these values land where each name says.
@@ -63,6 +63,8 @@ const rangeLegend = {
   '.': { room: 'Deck', walkable: true, opaque: false },
   '#': { room: 'Hull', walkable: false, opaque: true },
   o: { room: 'Deck', walkable: false, opaque: false, cover: true },
+  s: { room: 'Deck', walkable: false, opaque: false, cover: true, structure: { name: 'storage unit', hp: 9 } },
+  v: { room: 'Deck', walkable: false, opaque: false, cover: true, structure: { name: 'display bank', hp: 6 } },
 }
 
 function fireMission(): TacticalMission {
@@ -257,6 +259,122 @@ describe('projectiles and stray fire', () => {
     expect(hit.lastShots).toHaveLength(1)
     const moved = move(hit, 0, 0)
     expect(moved.lastShots).toEqual([])
+  })
+})
+
+function structureMission(): TacticalMission {
+  return {
+    id: 'structure-test',
+    objective: { kind: 'eliminate', label: 'Test destructible geometry' },
+    visionRange: 8,
+    map: defineTacticalMap({ rows: ['..........', '..s.......', '..........'], legend: rangeLegend }),
+    crewSpawns: [{ x: 0, y: 1 }],
+    units: [
+      { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 1, hp: 8, ap: 12, accuracy: 70 },
+      { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 8, y: 1, hp: 12, ap: 12, accuracy: 45 },
+    ],
+  }
+}
+
+describe('destructible geometry', () => {
+  it('tracks structure hit points from the map definition', () => {
+    const game = createGame(structureMission())
+    expect(game.structureHp).toEqual({ '2,1': 9 })
+    expect(isCellWalkable(game, { x: 2, y: 1 })).toBe(false)
+  })
+
+  it('takes deliberate fire without dodging: three snap rounds fell a storage unit', () => {
+    let game = createGame(structureMission())
+    const first = attackStructure(game, 2, 1, 'snap')
+    expect(first.structureHp['2,1']).toBe(6)
+    expect(unit(first, 'ada').ap).toBe(12 - FIRE_MODES.snap.cost)
+    expect(first.lastShots).toEqual([expect.objectContaining({ hitStructureAt: { x: 2, y: 1 }, structureDestroyed: false, damage: 3 })])
+    expect(first.log[0]).toContain('tears into the storage unit')
+
+    game = attackStructure(first, 2, 1, 'snap')
+    game = attackStructure(game, 2, 1, 'snap')
+    expect(game.structureHp['2,1']).toBe(0)
+    expect(unit(game, 'ada').ap).toBe(0)
+    expect(game.lastShots[0]).toMatchObject({ structureDestroyed: true })
+    expect(game.log[0]).toContain('destroys the storage unit')
+    expect(unit(game, 'ada').hits).toBe(0)
+  })
+
+  it('stops an auto burst once the structure falls and never overpays rounds', () => {
+    const mission = structureMission()
+    const fragile: TacticalMission = {
+      ...mission,
+      map: defineTacticalMap({ rows: ['..........', '..v.......', '..........'], legend: rangeLegend }),
+    }
+    const game = createGame(fragile)
+    const burst = attackStructure(game, 2, 1, 'auto')
+    expect(burst.structureHp['2,1']).toBe(0)
+    expect(burst.lastShots).toHaveLength(2)
+    expect(unit(burst, 'ada').ap).toBe(12 - FIRE_MODES.auto.cost)
+  })
+
+  it('leaves passable wreckage: soldiers walk through and cover stops working', () => {
+    let game = createGame(structureMission())
+    game = attackStructure(game, 2, 1, 'auto')
+    game = attackStructure(game, 2, 1, 'snap')
+    expect(game.structureHp['2,1']).toBe(0)
+    expect(isCellWalkable(game, { x: 2, y: 1 })).toBe(true)
+    expect(canTargetStructure(game, { x: 2, y: 1 })).toBe(false)
+
+    const refreshed = { ...game, units: game.units.map(u => u.id === 'ada' ? { ...u, ap: 12 } : u) }
+    expect(legalMoves(refreshed).map(key)).toContain('2,1')
+    const walked = move(refreshed, 2, 1)
+    expect(unit(walked, 'ada')).toMatchObject({ x: 2, y: 1 })
+
+    // The wreck no longer shields a target crouched behind it.
+    const shielded = createGame({
+      ...structureMission(),
+      units: structureMission().units.map(u => u.id === 'wraith-1' ? { ...u, x: 3, y: 1 } : u),
+    })
+    const wraith = unit(shielded, 'wraith-1')
+    const covered = hitChance(shielded, unit(shielded, 'ada'), wraith, 'aimed')
+    const cleared = { ...shielded, structureHp: { '2,1': 0 } }
+    expect(hitChance(cleared, unit(cleared, 'ada'), unit(cleared, 'wraith-1'), 'aimed')).toBe(covered + 20)
+  })
+
+  it('lets stray rounds chew into structures beside the fire lane', () => {
+    const mission = structureMission()
+    const strayField: TacticalMission = {
+      ...mission,
+      map: defineTacticalMap({
+        rows: ['..........', '..........', '..........', '..s.......', '..........'],
+        legend: rangeLegend,
+      }),
+      crewSpawns: [{ x: 0, y: 2 }],
+      units: [
+        { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 2, hp: 8, ap: 12, accuracy: 70 },
+        { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 6, y: 2, hp: 12, ap: 12, accuracy: 45 },
+      ],
+    }
+    const game = createGame(strayField)
+    const missed = attack({ ...game, rngState: RNG_SURE_MISS }, 'wraith-1', 'snap')
+
+    expect(unit(missed, 'wraith-1').hp).toBe(12)
+    expect(missed.structureHp['2,3']).toBe(6)
+    expect(missed.lastShots[0]).toMatchObject({ hitStructureAt: { x: 2, y: 3 }, structureDestroyed: false })
+    expect(missed.log[1]).toContain('slams into the storage unit')
+  })
+
+  it('refuses structure fire without hit points, range, or time units', () => {
+    const game = createGame(structureMission())
+    expect(canTargetStructure(game, { x: 2, y: 1 }, 'snap')).toBe(true)
+    expect(canTargetStructure(game, { x: 5, y: 0 }, 'snap')).toBe(false)
+    const tired = { ...game, units: game.units.map(u => u.id === 'ada' ? { ...u, ap: 3 } : u) }
+    expect(attackStructure(tired, 2, 1, 'snap')).toBe(tired)
+
+    const mission = structureMission()
+    const wide: TacticalMission = {
+      ...mission,
+      map: defineTacticalMap({ rows: ['............', '..s.........', '............'], legend: rangeLegend }),
+      units: mission.units.map(u => u.id === 'ada' ? { ...u, x: 11, y: 2 } : u),
+    }
+    const far = createGame(wide)
+    expect(canTargetStructure(far, { x: 2, y: 1 }, 'snap')).toBe(false)
   })
 })
 

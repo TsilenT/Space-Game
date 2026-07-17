@@ -29,11 +29,17 @@ import {
   type SystemKind,
 } from './sim/campaign'
 import { revealedSystemIds, systemById, type StarSystem } from './sim/galaxy'
-import { FIRE_MODES, attack, createGame, currentVisibility, type FireModeId, type GameState, hitChance, legalMoves, legalTargets, move, selectUnit, type ShotResult } from './sim/game'
-import { cellAt, isWalkable, key } from './sim/map'
+import { FIRE_MODES, attack, attackStructure, canTargetStructure, createGame, currentVisibility, type FireModeId, type GameState, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type ShotResult } from './sim/game'
+import { cellAt, key } from './sim/map'
 import { TurnController } from './turnController'
 
 const CELL = 58, OX = 52, OY = 78
+const STRUCTURE_COLORS: Record<string, number> = {
+  'display bank': 0x4fc3cf,
+  'storage unit': 0x8a7550,
+  'alien growth': 0x9a5bd9,
+  'control console': 0x5b84b0,
+}
 const ROOM_COLORS: Record<string, number> = {
   'Boarding Bay': 0x132b38,
   Medbay: 0x173437,
@@ -118,7 +124,11 @@ class TacticalScene extends Phaser.Scene {
   click(px: number, py: number) {
     if (animating || transitionLocked || campaign.phase !== 'mission' || state.phase !== 'player' || state.status !== 'playing') return
     const x = Math.floor((px - OX) / CELL), y = Math.floor((py - OY) / CELL)
-    if (!isWalkable(state.map, { x, y })) return
+    if (canTargetStructure(state, { x, y }, fireMode)) {
+      controller.replace(attackStructure(state, x, y, fireMode))
+      return
+    }
+    if (!isCellWalkable(state, { x, y })) return
     const visible = new Set(currentVisibility(state).map(key))
     const unit = state.units.find(candidate => candidate.hp > 0 && candidate.x === x && candidate.y === y && (candidate.team === 'crew' || visible.has(key(candidate))))
     if (unit?.team === 'crew') state = selectUnit(state, unit.id)
@@ -158,7 +168,29 @@ class TacticalScene extends Phaser.Scene {
       graphics.lineStyle(1, isVisible ? 0x426277 : 0x263946, isVisible ? .45 : .25).strokeRect(left, top, CELL - 2, CELL - 2)
       if (!isVisible) graphics.fillStyle(0x02070c, .58).fillRect(left, top, CELL - 2, CELL - 2)
       if (cell.door) graphics.fillStyle(isClosedDoor ? 0xf1bd5b : 0x63e3d6, isVisible ? .9 : .4).fillRect(left + CELL / 2 - 4, top + 6, 8, CELL - 14)
-      if (cell.cover) {
+      if (cell.structure) {
+        const structureColor = STRUCTURE_COLORS[cell.structure.name] ?? 0x8a7550
+        const hp = state.structureHp[pointKey] ?? 0
+        if (hp <= 0) {
+          graphics.fillStyle(structureColor, isVisible ? .3 : .15).fillRoundedRect(left + 8, top + CELL - 22, CELL - 18, 12, 3)
+          graphics.fillStyle(structureColor, isVisible ? .4 : .2).fillRect(left + 13, top + CELL - 32, 9, 7)
+          graphics.fillStyle(structureColor, isVisible ? .35 : .18).fillRect(left + 32, top + CELL - 29, 7, 5)
+          graphics.lineStyle(1, 0x06090d, .6).strokeRoundedRect(left + 8, top + CELL - 22, CELL - 18, 12, 3)
+        } else {
+          graphics.fillStyle(structureColor, isVisible ? .88 : .42).fillRoundedRect(left + 9, top + 9, CELL - 20, CELL - 20, 4)
+          graphics.lineStyle(2, 0x06090d, isVisible ? .75 : .4).strokeRoundedRect(left + 9, top + 9, CELL - 20, CELL - 20, 4)
+          const damage = 1 - hp / cell.structure.hp
+          if (damage > 0) {
+            graphics.lineStyle(2, 0x06090d, .9).lineBetween(left + 13, top + 14, left + CELL - 26, top + CELL - 18)
+            if (damage >= 0.5) graphics.lineStyle(2, 0x06090d, .9).lineBetween(left + CELL - 26, top + 13, left + 15, top + CELL - 17)
+            graphics.fillStyle(0x04070b, .9).fillRect(left + 9, top + CELL - 14, CELL - 20, 4)
+            graphics.fillStyle(structureColor, 1).fillRect(left + 9, top + CELL - 14, (CELL - 20) * hp / cell.structure.hp, 4)
+          }
+          if (canTargetStructure(state, point, fireMode)) {
+            graphics.lineStyle(2, 0xf1bd5b, .95).strokeRoundedRect(left + 6, top + 6, CELL - 14, CELL - 14, 5)
+          }
+        }
+      } else if (cell.cover) {
         graphics.fillStyle(0x8a7550, isVisible ? .85 : .4).fillRoundedRect(left + 9, top + 9, CELL - 20, CELL - 20, 4)
         graphics.lineStyle(2, 0x5a4b33, isVisible ? .9 : .45).strokeRoundedRect(left + 9, top + 9, CELL - 20, CELL - 20, 4)
       }
@@ -248,6 +280,15 @@ class TacticalScene extends Phaser.Scene {
       if (shot.killed) {
         const ring = this.add.circle(at.x, at.y, 16, 0x000000, 0).setStrokeStyle(3, 0xff5c68, 1)
         this.tweens.add({ targets: ring, scale: 2.4, alpha: 0, duration: 430, onComplete: () => ring.destroy() })
+      }
+    } else if (shot.hitStructureAt) {
+      const flash = this.add.circle(at.x, at.y, 11, 0xf1bd5b, 0.9)
+      this.tweens.add({ targets: flash, scale: shot.structureDestroyed ? 2.4 : 1.6, alpha: 0, duration: shot.structureDestroyed ? 400 : 230, onComplete: () => flash.destroy() })
+      const text = this.add.text(at.x, at.y - 16, `-${shot.damage}`, { fontFamily: 'monospace', fontSize: '15px', fontStyle: 'bold', color: '#f1bd5b' }).setOrigin(.5)
+      this.tweens.add({ targets: text, y: at.y - 40, alpha: 0, duration: 560, onComplete: () => text.destroy() })
+      if (shot.structureDestroyed) {
+        const dust = this.add.circle(at.x, at.y, 15, 0x000000, 0).setStrokeStyle(3, 0xc9b48a, 1)
+        this.tweens.add({ targets: dust, scale: 2.2, alpha: 0, duration: 460, onComplete: () => dust.destroy() })
       }
     } else if (shot.struckObstacle) {
       const spark = this.add.circle(at.x, at.y, 7, 0xc9d2d8, 0.85)

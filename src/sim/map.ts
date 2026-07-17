@@ -6,12 +6,18 @@ export interface Point {
 export type Team = 'crew' | 'enemy'
 export type CellKey = `${number},${number}`
 
+export interface StructureDefinition {
+  readonly name: string
+  readonly hp: number
+}
+
 export interface Cell extends Point {
   readonly room: string
   readonly walkable: boolean
   readonly opaque: boolean
   readonly door?: boolean
   readonly cover?: boolean
+  readonly structure?: StructureDefinition
 }
 
 export interface RoomDefinition {
@@ -73,6 +79,7 @@ interface TileDefinition {
   readonly opaque: boolean
   readonly door?: boolean
   readonly cover?: boolean
+  readonly structure?: StructureDefinition
 }
 
 interface MapDefinition {
@@ -118,7 +125,21 @@ export const roomAt = (map: TacticalMap, point: Point): string => cellAt(map, po
 const floor = (room: string): TileDefinition => ({ room, walkable: true, opaque: false })
 const wall: TileDefinition = { room: 'Hull', walkable: false, opaque: true }
 const closedDoor = (room: string): TileDefinition => ({ room, walkable: true, opaque: true, door: true })
-const crate = (room: string): TileDefinition => ({ room, walkable: false, opaque: false, cover: true })
+
+/**
+ * Destructible furniture: blocks movement and grants cover until its hit
+ * points run out, then collapses into walkable wreckage. Easy pieces fall in
+ * 2-3 rifle rounds, tough ones in 4-5.
+ */
+export const STRUCTURE_KINDS = {
+  displayBank: { name: 'display bank', hp: 6 },
+  storageUnit: { name: 'storage unit', hp: 9 },
+  alienGrowth: { name: 'alien growth', hp: 12 },
+  controlConsole: { name: 'control console', hp: 15 },
+} as const satisfies Readonly<Record<string, StructureDefinition>>
+
+const structure = (room: string, kind: StructureDefinition): TileDefinition =>
+  ({ room, walkable: false, opaque: false, cover: true, structure: kind })
 
 export const BASE_TIME_UNITS = 12
 
@@ -151,8 +172,8 @@ export const BOARDING_MISSION: TacticalMission = {
       '#AAA#MM#CCC#',
       '#AAADMMMCCC#',
       'AAAA#MMMCCCC',
-      'AAAA#MMMCCcC',
-      'AAAARRR#WWWW',
+      'AAAA#MdMCCcC',
+      'AAAARRR#WgWW',
       'AAAARoRRHWWW',
       '#AAARRR#WWW#',
       '#AAA#RR#WWW#',
@@ -166,8 +187,10 @@ export const BOARDING_MISSION: TacticalMission = {
       W: floor('Weapons'),
       D: closedDoor('Medbay'),
       H: closedDoor('Weapons'),
-      o: crate('Reactor'),
-      c: crate('Bridge'),
+      o: structure('Reactor', STRUCTURE_KINDS.storageUnit),
+      c: structure('Bridge', STRUCTURE_KINDS.controlConsole),
+      d: structure('Medbay', STRUCTURE_KINDS.displayBank),
+      g: structure('Weapons', STRUCTURE_KINDS.alienGrowth),
     },
     rooms: [
       { name: 'Boarding Bay', label: { x: 1, y: 7 } },
@@ -214,7 +237,7 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
   map: defineTacticalMap({
     rows: [
       '#DDD#CC#BBB#',
-      '#DDDDCCBBBB#',
+      '#DDDDpCBBBB#',
       'DDDDCCCCBbBB',
       'DDD##CCCBBBB',
       'DDDDeEEE#BBB',
@@ -228,8 +251,9 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
       C: floor('Commons'),
       B: floor('Bridge'),
       E: floor('Engineering'),
-      b: crate('Bridge'),
-      e: crate('Engineering'),
+      b: structure('Bridge', STRUCTURE_KINDS.controlConsole),
+      e: structure('Engineering', STRUCTURE_KINDS.storageUnit),
+      p: structure('Commons', STRUCTURE_KINDS.displayBank),
     },
     rooms: [
       { name: 'Dock', label: { x: 1, y: 7 } },
@@ -286,7 +310,7 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
       'AAA##XX##BBB',
       'AAAAcCCCCBBB',
       '#AAACCCcCBB#',
-      '#AA##CCCCBB#',
+      '#AA##CCCgBB#',
       '##A##CC##B##',
     ],
     legend: {
@@ -295,7 +319,8 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
       X: floor('Crossway'),
       B: floor('Cargo Hold'),
       C: floor('Reactor Deck'),
-      c: crate('Reactor Deck'),
+      c: structure('Reactor Deck', STRUCTURE_KINDS.storageUnit),
+      g: structure('Reactor Deck', STRUCTURE_KINDS.alienGrowth),
     },
     rooms: [
       { name: 'Airlock', label: { x: 2, y: 7 } },
