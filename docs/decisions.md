@@ -71,6 +71,12 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Enemy strays use the identical ballistics, so a pirate missing one crew member can wing another.
 - All trajectories resolve against the existing seeded mission RNG, so replays of a seed remain identical. Shot spread beyond a single deflected ray, damage falloff along strays, and destructible terrain remain deferred.
 
+### Dedicated game screen — July 17, 2026
+
+- The landing page is a pitch: hero copy, a Start Game button, and the design/onboarding sections below the fold. No game UI renders on it.
+- Start Game switches to a full-viewport game screen: a slim top bar (brand, tactical key reference, Exit), the star map or battle map filling the main column, and one sidebar with ship and soldier information. Exit returns to the landing page without losing the run.
+- The tactical canvas sizes to the viewport (capped by height at its 4:3 ratio) instead of a fixed center column, so battles use most of the screen; the galaxy map widens similarly. On narrow screens the sidebar stacks below the map.
+
 ## Open creative questions
 
 1. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?
