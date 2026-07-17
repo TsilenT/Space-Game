@@ -73,12 +73,27 @@ const endTurnButton = document.querySelector<HTMLButtonElement>('#end-turn')!
 const restartButton = document.querySelector<HTMLButtonElement>('#restart')!
 const hud = document.querySelector<HTMLElement>('#hud')!
 const consoleElement = document.querySelector<HTMLElement>('.console')!
+const gameBar = document.querySelector<HTMLElement>('#game-bar')!
+const startGameButton = document.querySelector<HTMLButtonElement>('#start-game')!
+const exitGameButton = document.querySelector<HTMLButtonElement>('#exit-game')!
 tacticalContainer.tabIndex = -1
 const campaignScreen = document.createElement('section')
 campaignScreen.id = 'campaign-screen'
 campaignScreen.hidden = true
 campaignScreen.setAttribute('aria-label', 'Campaign command screen')
 consoleElement.insertBefore(campaignScreen, tacticalContainer)
+
+function setGameMode(active: boolean) {
+  document.body.classList.toggle('in-game', active)
+  gameBar.hidden = !active
+  window.scrollTo(0, 0)
+  if (active) focusNextScreen = true
+  renderApp()
+  if (sceneReady) scene.scale.refresh()
+}
+
+startGameButton.onclick = () => setGameMode(true)
+exitGameButton.onclick = () => setGameMode(false)
 
 function terminalTitle(current: GameState): string {
   if (current.resolution?.reason === 'survivor-rescued') return 'SURVIVOR SECURED'
@@ -656,7 +671,7 @@ function configureTacticalActions() {
 
 document.addEventListener('keydown', event => {
   const target = event.target as HTMLElement
-  if (animating || campaign.phase !== 'mission' || target.matches('input, textarea, select, button, a') || target.isContentEditable || event.altKey || event.ctrlKey || event.metaKey) return
+  if (!document.body.classList.contains('in-game') || animating || campaign.phase !== 'mission' || target.matches('input, textarea, select, button, a') || target.isContentEditable || event.altKey || event.ctrlKey || event.metaKey) return
   const pressed = event.key.toLowerCase()
   if (state.status !== 'playing') {
     if (pressed === 'enter') finishMission()

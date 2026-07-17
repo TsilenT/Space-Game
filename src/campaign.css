@@ -722,6 +722,145 @@ button.sold-out {
   opacity: .45;
 }
 
+/* Landing screen: hero pitch only — the game lives on its own screen. */
+body:not(.in-game) .play {
+  display: block;
+  max-width: 980px;
+  padding: clamp(48px, 9vh, 110px) clamp(18px, 4vw, 48px);
+}
+
+body:not(.in-game) .console,
+body:not(.in-game) #hud,
+body:not(.in-game) #game-bar {
+  display: none;
+}
+
+#start-game {
+  margin-top: 30px;
+  padding: 18px 46px;
+  border: 1px solid var(--cyan);
+  background: var(--cyan);
+  color: #041012;
+  font: 700 1rem 'Space Mono', monospace;
+  letter-spacing: .12em;
+}
+
+#start-game:hover {
+  filter: brightness(1.12);
+}
+
+/* Game screen: full viewport, map plus the ship/soldier sidebar. */
+body.in-game {
+  overflow-x: hidden;
+}
+
+body.in-game header,
+body.in-game .mission,
+body.in-game .design,
+body.in-game .onboarding {
+  display: none;
+}
+
+body.in-game .play {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(270px, 330px);
+  align-items: start;
+  gap: 16px;
+  max-width: none;
+  min-height: 100vh;
+  padding: 14px clamp(12px, 2vw, 26px) 20px;
+}
+
+body.in-game #game-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  background: #08131d;
+}
+
+.game-brand {
+  font: 700 .8rem 'Space Mono', monospace;
+  letter-spacing: .06em;
+  white-space: nowrap;
+}
+
+.game-brand small {
+  color: var(--cyan);
+}
+
+.game-controls {
+  color: var(--muted);
+  font: .64rem/1.7 'Space Mono', monospace;
+}
+
+.game-controls kbd {
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: #10212d;
+  color: var(--ink);
+  padding: 1px 4px;
+}
+
+#exit-game {
+  padding: 9px 18px;
+  border: 1px solid var(--line);
+  background: #10212d;
+  color: var(--muted);
+  font: 700 .68rem 'Space Mono', monospace;
+  letter-spacing: .1em;
+}
+
+#exit-game:hover {
+  color: var(--ink);
+  filter: brightness(1.15);
+}
+
+body.in-game .console {
+  width: 100%;
+  max-width: min(100%, calc((100vh - 170px) * 4 / 3));
+  margin: 0 auto;
+  min-width: 0;
+}
+
+body.in-game #hud {
+  max-height: calc(100vh - 92px);
+  overflow-y: auto;
+  min-width: 0;
+}
+
+body.in-game .galaxy-map {
+  max-width: 740px;
+}
+
+@media (max-width: 900px) {
+  body.in-game .play {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.in-game #game-bar {
+    flex-wrap: wrap;
+  }
+
+  body.in-game .game-controls {
+    order: 3;
+    width: 100%;
+  }
+
+  body.in-game .console {
+    max-width: none;
+  }
+
+  body.in-game #hud {
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
 @media (max-width: 900px) {
   .play {
     display: block;
