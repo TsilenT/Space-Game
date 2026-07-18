@@ -17,15 +17,15 @@ describe('deterministic tactical simulation', () => {
     expect(game.units.filter(u => u.team === 'crew')).toHaveLength(4)
     expect(game.units.filter(u => u.team === 'enemy')).toHaveLength(3)
     expect(game.phase).toBe('player')
-    expect(game.map).toMatchObject({ width: 12, height: 8 })
+    expect(game.map).toMatchObject({ width: 36, height: 24 })
     expect(game.map.rooms).toHaveLength(5)
     expect(game.map.systems).toHaveLength(4)
   })
   it('moves only to reachable walkable unoccupied cells and spends time units', () => {
     let game = selectUnit(createGame(), 'soren')
-    expect(legalMoves(game)).toContainEqual({ x: 3, y: 6 })
-    game = move(game, 3, 6)
-    expect(unit(game, 'soren')).toMatchObject({ x: 3, y: 6, ap: TURN_TIME_UNITS - 3 })
+    expect(legalMoves(game)).toContainEqual({ x: 10, y: 19 })
+    game = move(game, 10, 19)
+    expect(unit(game, 'soren')).toMatchObject({ x: 10, y: 19, ap: TURN_TIME_UNITS - 3 })
     expect(move(game, 0, 0)).toBe(game)
   })
   it('rejects enemy selection and out-of-range attacks', () => {
@@ -35,7 +35,7 @@ describe('deterministic tactical simulation', () => {
   })
   it('deals damage on a sure hit, spends time units, and removes dead units from play', () => {
     const base = createGame()
-    const units = base.units.map(u => u.id === 'ada' ? { ...u, x: 5, y: 2 } : u.id === 'wraith-1' ? { ...u, hp: 3 } : u)
+    const units = base.units.map(u => u.id === 'ada' ? { ...u, x: 17, y: 7 } : u.id === 'wraith-1' ? { ...u, hp: 3 } : u)
     const game = attack({ ...base, units, selectedId: 'ada', rngState: RNG_SURE_HIT }, 'wraith-1')
     expect(unit(game, 'wraith-1').hp).toBe(0)
     expect(unit(game, 'ada')).toMatchObject({ ap: TURN_TIME_UNITS - FIRE_MODES.snap.cost, hits: 1 })
@@ -86,10 +86,10 @@ describe('fire modes and accuracy', () => {
     const game = createGame(fireMission())
     const ada = unit(game, 'ada')
     const wraith = unit(game, 'wraith-1')
-    // Distance 4 → 9% range penalty on top of the mode factor.
-    expect(hitChance(game, ada, wraith, 'snap')).toBe(51)
-    expect(hitChance(game, ada, wraith, 'auto')).toBe(33)
-    expect(hitChance(game, ada, wraith, 'aimed')).toBe(72)
+    // Distance 4 → 3% range penalty on top of the mode factor.
+    expect(hitChance(game, ada, wraith, 'snap')).toBe(57)
+    expect(hitChance(game, ada, wraith, 'auto')).toBe(39)
+    expect(hitChance(game, ada, wraith, 'aimed')).toBe(78)
     // Point blank drops the range penalty entirely.
     const close = { ...game, units: game.units.map(u => u.id === 'wraith-1' ? { ...u, x: 1 } : u) }
     expect(hitChance(close, unit(close, 'ada'), unit(close, 'wraith-1'), 'aimed')).toBe(81)
@@ -104,10 +104,10 @@ describe('fire modes and accuracy', () => {
     const game = createGame(covered)
     const ada = unit(game, 'ada')
     const wraith = unit(game, 'wraith-1')
-    expect(hitChance(game, ada, wraith, 'aimed')).toBe(52)
+    expect(hitChance(game, ada, wraith, 'aimed')).toBe(58)
     // The same crate does not shield against fire from the opposite side.
     const flanked = { ...game, units: game.units.map(u => u.id === 'ada' ? { ...u, x: 8 } : u) }
-    expect(hitChance(flanked, unit(flanked, 'ada'), unit(flanked, 'wraith-1'), 'aimed')).toBe(72)
+    expect(hitChance(flanked, unit(flanked, 'ada'), unit(flanked, 'wraith-1'), 'aimed')).toBe(78)
   })
 
   it('spends the fire mode cost, hits deterministically, and tracks landed hits', () => {
@@ -157,9 +157,10 @@ describe('fire modes and accuracy', () => {
     }
     const staged = { ...createGame(dark), phase: 'enemy' as const, selectedId: undefined, rngState: RNG_SURE_HIT }
     const result = enemyTurn(staged)
-    // Clear corridor, sure-hit roll — but at distance 8 the wraith advances instead of firing.
-    expect(unit(result, 'ada').hp).toBe(8)
-    expect(unit(result, 'wraith-1').x).toBe(7)
+    // Clear corridor, sure-hit roll — but the wraith holds fire at distance 8
+    // and 7, closing to vision range before its shot lands.
+    expect(unit(result, 'wraith-1').x).toBe(6)
+    expect(unit(result, 'ada').hp).toBe(6)
   })
 
   it('rolls enemy fire with the same accuracy system so cover protects crew', () => {

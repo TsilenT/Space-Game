@@ -89,6 +89,20 @@ interface MapDefinition {
   readonly systems?: readonly SystemMarker[]
 }
 
+/** Authored rooms are tripled in both dimensions so ships feel like real spaces. */
+export const MAP_SCALE = 3
+
+/** Expand each authored tile into a MAP_SCALE × MAP_SCALE block. */
+export function scaleRows(rows: readonly string[]): string[] {
+  return rows.flatMap(row => {
+    const scaled = [...row].map(symbol => symbol.repeat(MAP_SCALE)).join('')
+    return Array.from({ length: MAP_SCALE }, () => scaled)
+  })
+}
+
+/** Map an authored coordinate to the centre of its scaled block. */
+export const scalePoint = ({ x, y }: Point): Point => ({ x: x * MAP_SCALE + 1, y: y * MAP_SCALE + 1 })
+
 export function defineTacticalMap(definition: MapDefinition): TacticalMap {
   const height = definition.rows.length
   const width = definition.rows[0]?.length ?? 0
@@ -161,14 +175,14 @@ const BOARDING_CREW_SPAWNS = [
   { x: 2, y: 6 },
   { x: 3, y: 5 },
   { x: 3, y: 6 },
-] as const
+].map(scalePoint)
 
 export const BOARDING_MISSION: TacticalMission = {
   id: 'hostile-boarding-action',
   objective: { kind: 'eliminate', label: 'Locate and eliminate hostiles' },
-  visionRange: 6,
+  visionRange: 18,
   map: defineTacticalMap({
-    rows: [
+    rows: scaleRows([
       '#AAA#MM#CCC#',
       '#AAADMMMCCC#',
       'AAAA#MMMCCCC',
@@ -177,7 +191,7 @@ export const BOARDING_MISSION: TacticalMission = {
       'AAAARoRRHWWW',
       '#AAARRR#WWW#',
       '#AAA#RR#WWW#',
-    ],
+    ]),
     legend: {
       '#': wall,
       A: floor('Boarding Bay'),
@@ -193,25 +207,25 @@ export const BOARDING_MISSION: TacticalMission = {
       g: structure('Weapons', STRUCTURE_KINDS.alienGrowth),
     },
     rooms: [
-      { name: 'Boarding Bay', label: { x: 1, y: 7 } },
-      { name: 'Medbay', label: { x: 5, y: 0 } },
-      { name: 'Reactor', label: { x: 5, y: 7 } },
-      { name: 'Bridge', label: { x: 9, y: 0 } },
-      { name: 'Weapons', label: { x: 9, y: 7 } },
+      { name: 'Boarding Bay', label: scalePoint({ x: 1, y: 7 }) },
+      { name: 'Medbay', label: scalePoint({ x: 5, y: 0 }) },
+      { name: 'Reactor', label: scalePoint({ x: 5, y: 7 }) },
+      { name: 'Bridge', label: scalePoint({ x: 9, y: 0 }) },
+      { name: 'Weapons', label: scalePoint({ x: 9, y: 7 }) },
     ],
     systems: [
-      { x: 6, y: 1, room: 'Medbay', system: 'MED' },
-      { x: 6, y: 6, room: 'Reactor', system: 'CORE' },
-      { x: 10, y: 1, room: 'Bridge', system: 'NAV' },
-      { x: 10, y: 6, room: 'Weapons', system: 'GUN' },
+      { ...scalePoint({ x: 6, y: 1 }), room: 'Medbay', system: 'MED' },
+      { ...scalePoint({ x: 6, y: 6 }), room: 'Reactor', system: 'CORE' },
+      { ...scalePoint({ x: 10, y: 1 }), room: 'Bridge', system: 'NAV' },
+      { ...scalePoint({ x: 10, y: 6 }), room: 'Weapons', system: 'GUN' },
     ],
   }),
   crewSpawns: BOARDING_CREW_SPAWNS,
   units: [
     ...crewAt(BOARDING_CREW_SPAWNS),
-    { id: 'wraith-1', name: 'Wraith Kesh', role: 'Void raider', team: 'enemy', x: 6, y: 2, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'wraith-2', name: 'Wraith Oru', role: 'Void raider', team: 'enemy', x: 9, y: 2, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'wraith-3', name: 'Wraith Vek', role: 'Void raider', team: 'enemy', x: 9, y: 6, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'wraith-1', name: 'Wraith Kesh', role: 'Void raider', team: 'enemy', ...scalePoint({ x: 6, y: 2 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'wraith-2', name: 'Wraith Oru', role: 'Void raider', team: 'enemy', ...scalePoint({ x: 9, y: 2 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'wraith-3', name: 'Wraith Vek', role: 'Void raider', team: 'enemy', ...scalePoint({ x: 9, y: 6 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
   ],
 }
 
@@ -222,20 +236,20 @@ const COURIER_CREW_SPAWNS = [
   { x: 2, y: 6 },
   { x: 3, y: 5 },
   { x: 3, y: 6 },
-] as const
+].map(scalePoint)
 
 export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
   id: 'civilian-courier-rescue',
   objective: {
     kind: 'rescue',
     label: 'Reach the courier survivor before the ship detonates',
-    target: { x: 10, y: 1 },
+    target: scalePoint({ x: 10, y: 1 }),
     targetName: 'Courier survivor',
     deadlineTurn: 8,
   },
-  visionRange: 6,
+  visionRange: 18,
   map: defineTacticalMap({
-    rows: [
+    rows: scaleRows([
       '#DDD#CC#BBB#',
       '#DDDDpCBBBB#',
       'DDDDCCCCBbBB',
@@ -244,7 +258,7 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
       'DDDDEEEEBBBB',
       '#DDDEEEEBBB#',
       '#DDD#EE#BBB#',
-    ],
+    ]),
     legend: {
       '#': wall,
       D: floor('Dock'),
@@ -256,23 +270,23 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
       p: structure('Commons', STRUCTURE_KINDS.displayBank),
     },
     rooms: [
-      { name: 'Dock', label: { x: 1, y: 7 } },
-      { name: 'Commons', label: { x: 5, y: 0 } },
-      { name: 'Bridge', label: { x: 9, y: 0 } },
-      { name: 'Engineering', label: { x: 5, y: 7 } },
+      { name: 'Dock', label: scalePoint({ x: 1, y: 7 }) },
+      { name: 'Commons', label: scalePoint({ x: 5, y: 0 }) },
+      { name: 'Bridge', label: scalePoint({ x: 9, y: 0 }) },
+      { name: 'Engineering', label: scalePoint({ x: 5, y: 7 }) },
     ],
     systems: [
-      { x: 6, y: 1, room: 'Commons', system: 'LIFE' },
-      { x: 6, y: 6, room: 'Engineering', system: 'CORE' },
-      { x: 10, y: 1, room: 'Bridge', system: 'SOS' },
+      { ...scalePoint({ x: 6, y: 1 }), room: 'Commons', system: 'LIFE' },
+      { ...scalePoint({ x: 6, y: 6 }), room: 'Engineering', system: 'CORE' },
+      { ...scalePoint({ x: 10, y: 1 }), room: 'Bridge', system: 'SOS' },
     ],
   }),
   crewSpawns: COURIER_CREW_SPAWNS,
   units: [
     ...crewAt(COURIER_CREW_SPAWNS),
-    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', x: 6, y: 2, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', x: 8, y: 3, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', x: 9, y: 6, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 6, y: 2 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 8, y: 3 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 9, y: 6 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
   ],
 }
 
@@ -296,14 +310,14 @@ const TRAP_CREW_SPAWNS = [
   { x: 3, y: 4 },
   { x: 1, y: 4 },
   { x: 3, y: 5 },
-] as const
+].map(scalePoint)
 
 export const DISTRESS_TRAP_MISSION: TacticalMission = {
   id: 'distress-signal-trap',
   objective: { kind: 'eliminate', label: 'Survive the ambush and eliminate the pirates' },
-  visionRange: 6,
+  visionRange: 18,
   map: defineTacticalMap({
-    rows: [
+    rows: scaleRows([
       '##AA####BB##',
       '#AAAA##BBBB#',
       'AAAAAXXBBBBB',
@@ -312,7 +326,7 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
       '#AAACCCcCBB#',
       '#AA##CCCgBB#',
       '##A##CC##B##',
-    ],
+    ]),
     legend: {
       '#': wall,
       A: floor('Airlock'),
@@ -323,24 +337,24 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
       g: structure('Reactor Deck', STRUCTURE_KINDS.alienGrowth),
     },
     rooms: [
-      { name: 'Airlock', label: { x: 2, y: 7 } },
-      { name: 'Crossway', label: { x: 5, y: 2 } },
-      { name: 'Cargo Hold', label: { x: 9, y: 0 } },
-      { name: 'Reactor Deck', label: { x: 5, y: 7 } },
+      { name: 'Airlock', label: scalePoint({ x: 2, y: 7 }) },
+      { name: 'Crossway', label: scalePoint({ x: 5, y: 2 }) },
+      { name: 'Cargo Hold', label: scalePoint({ x: 9, y: 0 }) },
+      { name: 'Reactor Deck', label: scalePoint({ x: 5, y: 7 }) },
     ],
     systems: [
-      { x: 6, y: 2, room: 'Crossway', system: 'LOCK' },
-      { x: 6, y: 5, room: 'Reactor Deck', system: 'CORE' },
-      { x: 9, y: 5, room: 'Cargo Hold', system: 'BAIT' },
+      { ...scalePoint({ x: 6, y: 2 }), room: 'Crossway', system: 'LOCK' },
+      { ...scalePoint({ x: 6, y: 5 }), room: 'Reactor Deck', system: 'CORE' },
+      { ...scalePoint({ x: 9, y: 5 }), room: 'Cargo Hold', system: 'BAIT' },
     ],
   }),
   crewSpawns: TRAP_CREW_SPAWNS,
   units: [
     ...crewAt(TRAP_CREW_SPAWNS),
-    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', x: 6, y: 2, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', x: 8, y: 2, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', x: 9, y: 5, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'pirate-4', name: 'Mara Quill', role: 'Pirate gunner', team: 'enemy', x: 7, y: 4, hp: 6, ap: BASE_TIME_UNITS, accuracy: 55 },
+    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 6, y: 2 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 8, y: 2 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 9, y: 5 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-4', name: 'Mara Quill', role: 'Pirate gunner', team: 'enemy', ...scalePoint({ x: 7, y: 4 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 55 },
   ],
 }
 

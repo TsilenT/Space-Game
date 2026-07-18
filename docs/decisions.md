@@ -85,6 +85,15 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Start Game switches to a full-viewport game screen: a slim top bar (brand, tactical key reference, Exit), the star map or battle map filling the main column, and one sidebar with ship and soldier information. Exit returns to the landing page without losing the run.
 - The tactical canvas sizes to the viewport (capped by height at its 4:3 ratio) instead of a fixed center column, so battles use most of the screen; the galaxy map widens similarly. On narrow screens the sidebar stacks below the map.
 
+### Big ships and a tactical camera — July 18, 2026
+
+- Authored 12x8 maps are tripled at load into 36x24 tactical grids (`MAP_SCALE` in `src/sim/map.ts`): every authored tile becomes a 3x3 block, and spawns, room labels, system markers, and the rescue target snap to block centres. Rooms now read as real spaces several tiles across.
+- Per-tile tuning shrank to match the finer grid: move cost 3→1 TU, attack range 8→24 tiles, distance penalty 3→1% per tile, stray overshoot 4→12 tiles, vision 6→18. A turn still covers the same physical distance and the same authored-room feel.
+- Enemies take up to three steps per enemy phase on the finer grid, stopping to fire as soon as a target is inside vision with line of sight, so their pace matches the crew's.
+- The tactical canvas stays 800x600 and becomes a viewport onto the larger world. The camera centres on the selected soldier at mission start, pans smoothly when selection changes, follows the active soldier when they walk near the viewport edge, and pans to gunfire during enemy phases. Players can drag or mouse-wheel to look around freely; manual panning suspends auto-follow until the next selection.
+- Turn banner and mission-end overlays are fixed to the screen, not the world. Scroll is always clamped to the map bounds.
+- Deferred: camera zoom, edge-of-screen mouse scrolling, and a minimap.
+
 ## Open creative questions
 
 1. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?

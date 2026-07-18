@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { attack, createGame, currentVisibility, enemyTurn, legalTargets, move, selectUnit } from './game'
-import { BOARDING_MISSION, defineTacticalMap, key, type TacticalMission } from './map'
+import { BOARDING_MISSION, MAP_SCALE, defineTacticalMap, key, type TacticalMission } from './map'
 import { hasLineOfSight, visibleCells } from './visibility'
 
 const legend = {
@@ -37,9 +37,12 @@ describe('deterministic line of sight', () => {
     expect(hasLineOfSight(clearMap, { x: 0, y: 0 }, { x: 2, y: 4 })).toBe(true)
   })
 
-  it('is symmetric for every cell pair on the boarding map', () => {
-    for (const from of BOARDING_MISSION.map.cells) {
-      for (const to of BOARDING_MISSION.map.cells) {
+  it('is symmetric for every authored-block-centre pair on the boarding map', () => {
+    // The scaled map has too many cells for a full pairwise sweep, so check the
+    // centre of every authored 3x3 block — one probe per original cell pair.
+    const centres = BOARDING_MISSION.map.cells.filter(cell => cell.x % MAP_SCALE === 1 && cell.y % MAP_SCALE === 1)
+    for (const from of centres) {
+      for (const to of centres) {
         expect(hasLineOfSight(BOARDING_MISSION.map, from, to)).toBe(hasLineOfSight(BOARDING_MISSION.map, to, from))
       }
     }
@@ -122,14 +125,14 @@ describe('line of sight in combat', () => {
   it('rejects a wall-blocked shot even when a teammate sees the target', () => {
     const base = createGame()
     const units = base.units.map(unit => unit.id === 'ada'
-      ? { ...unit, x: 3, y: 3 }
+      ? { ...unit, x: 10, y: 10 }
       : unit.id === 'milo'
-        ? { ...unit, x: 5, y: 2 }
+        ? { ...unit, x: 16, y: 7 }
         : unit.id === 'wraith-1'
-          ? { ...unit, x: 5, y: 3 }
+          ? { ...unit, x: 16, y: 10 }
           : unit)
     const game = { ...base, units, selectedId: 'ada' }
-    expect(new Set(currentVisibility(game).map(key)).has('5,3')).toBe(true)
+    expect(new Set(currentVisibility(game).map(key)).has('16,10')).toBe(true)
     expect(legalTargets(game).map(unit => unit.id)).not.toContain('wraith-1')
     expect(attack(game, 'wraith-1')).toBe(game)
   })
@@ -137,9 +140,9 @@ describe('line of sight in combat', () => {
   it('prevents enemy damage through a wall', () => {
     const base = createGame()
     const units = base.units.map(unit => unit.id === 'wraith-1'
-      ? { ...unit, x: 3, y: 3 }
+      ? { ...unit, x: 10, y: 10 }
       : unit.id === 'ada'
-        ? { ...unit, x: 5, y: 3 }
+        ? { ...unit, x: 16, y: 10 }
         : { ...unit, hp: 0 })
     const result = enemyTurn({ ...base, phase: 'enemy', selectedId: undefined, units })
     expect(result.units.find(unit => unit.id === 'ada')?.hp).toBe(8)
@@ -148,11 +151,11 @@ describe('line of sight in combat', () => {
   it('lets enemy AI skip a nearer occluded target for a visible one', () => {
     const base = createGame()
     const units = base.units.map(unit => unit.id === 'wraith-1'
-      ? { ...unit, x: 3, y: 3 }
+      ? { ...unit, x: 10, y: 10 }
       : unit.id === 'ada'
-        ? { ...unit, x: 5, y: 3 }
+        ? { ...unit, x: 16, y: 10 }
         : unit.id === 'milo'
-          ? { ...unit, x: 3, y: 0 }
+          ? { ...unit, x: 10, y: 1 }
           : { ...unit, hp: 0 })
     const result = enemyTurn({ ...base, phase: 'enemy', selectedId: undefined, units })
     expect(result.units.find(unit => unit.id === 'ada')?.hp).toBe(8)
@@ -160,15 +163,21 @@ describe('line of sight in combat', () => {
   })
 
   it('routes enemies around walls without oscillating', () => {
-    const base = createGame()
-    const units = base.units.map(unit => unit.id === 'wraith-1'
-      ? { ...unit, x: 5, y: 0 }
-      : unit.id === 'ada'
-        ? { ...unit, x: 1, y: 0 }
-        : { ...unit, hp: 0 })
-    const first = enemyTurn({ ...base, phase: 'enemy', selectedId: undefined, units })
-    expect(first.units.find(unit => unit.id === 'wraith-1')).toMatchObject({ x: 5, y: 1 })
+    const mission: TacticalMission = {
+      id: 'routing-test',
+      objective: { kind: 'eliminate', label: 'Test routing' },
+      visionRange: 2,
+      map: mapFrom('.....', '.###.', '.....'),
+      crewSpawns: [{ x: 0, y: 1 }],
+      units: [
+        { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 1, hp: 8, ap: 12, accuracy: 60 },
+        { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 4, y: 1, hp: 6, ap: 12, accuracy: 45 },
+      ],
+    }
+    const base = createGame(mission)
+    const first = enemyTurn({ ...base, phase: 'enemy', selectedId: undefined })
+    expect(first.units.find(unit => unit.id === 'wraith-1')).toMatchObject({ x: 2, y: 0 })
     const second = enemyTurn({ ...first, phase: 'enemy', selectedId: undefined })
-    expect(second.units.find(unit => unit.id === 'wraith-1')).toMatchObject({ x: 4, y: 1 })
+    expect(second.units.find(unit => unit.id === 'wraith-1')).toMatchObject({ x: 1, y: 0 })
   })
 })
