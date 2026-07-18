@@ -79,7 +79,7 @@ describe('authored tactical mission definitions', () => {
     }
   })
 
-  it('keeps scaled doors one tile wide with a walkable lane and no adjacent doors', () => {
+  it('keeps scaled doors one tile wide, on room faces, with no adjacent doors', () => {
     for (const mission of TACTICAL_MISSIONS) {
       for (const door of mission.map.cells.filter(cell => cell.door)) {
         expect({ x: door.x % MAP_SCALE, y: door.y % MAP_SCALE }).toEqual({ x: 1, y: 1 })
@@ -89,11 +89,14 @@ describe('authored tactical mission definitions', () => {
           { x: door.x, y: door.y + 1 },
           { x: door.x, y: door.y - 1 },
         ].map(point => cellAt(mission.map, point))
-        expect(neighbours.some(cell => cell?.walkable)).toBe(true)
+        // A door is an opening in a one-tile wall plane: open floor on both
+        // sides of the passage, wall on the other axis, never another door.
+        expect(neighbours.filter(cell => cell?.walkable).length).toBeGreaterThanOrEqual(2)
         expect(neighbours.every(cell => !cell?.door)).toBe(true)
       }
     }
-    expect(BOARDING_MISSION.map.cells.filter(cell => cell.door)).toHaveLength(2)
+    const doorCounts = TACTICAL_MISSIONS.map(mission => mission.map.cells.filter(cell => cell.door).length)
+    expect(doorCounts).toEqual([2, 2, 1, 2])
   })
 
   it('defines the courier rescue deadline and every combat scenario as elimination', () => {
