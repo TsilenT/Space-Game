@@ -95,38 +95,57 @@ const BLOCK_CENTRE = Math.floor(MAP_SCALE / 2)
 
 /**
  * Expand each authored tile into a MAP_SCALE × MAP_SCALE block. Door tiles do
- * not widen with the rooms: the block keeps a single door cell at its centre,
- * a one-tile lane runs toward each walkable authored neighbour, and hull wall
- * frames the rest, so every doorway stays one space across.
+ * not widen with the rooms: the block becomes a one-tile-thick wall plane
+ * across the passage with a single door cell as its opening, flanked by the
+ * neighbouring rooms' floor. The door sits on the face of the wall, so it is
+ * one space wide and visible from inside both rooms it connects.
  */
 export function scaleMapDefinition({ rows, legend }: Pick<MapDefinition, 'rows' | 'legend'>): Pick<MapDefinition, 'rows' | 'legend'> {
   const wallSymbol = Object.keys(legend).find(symbol => {
     const tile = legend[symbol]
     return !tile.walkable && tile.opaque && !tile.door && !tile.structure
   })
+  if (!wallSymbol && Object.values(legend).some(tile => tile.door)) {
+    throw new Error('A map with doors needs a wall tile to frame the scaled doorways.')
+  }
   const spareSymbols = [...'abcdefghijklmnopqrstuvwxyz0123456789'].filter(symbol => !(symbol in legend))
-  const laneSymbols = new Map<string, string>()
   const scaledLegend: Record<string, TileDefinition> = { ...legend }
-  for (const [symbol, tile] of Object.entries(legend)) {
-    if (!tile.door) continue
-    if (!wallSymbol) throw new Error('A map with doors needs a wall tile to frame the scaled doorways.')
-    const lane = spareSymbols.shift()
-    if (!lane) throw new Error('No spare symbols left for scaled doorway lanes.')
-    laneSymbols.set(symbol, lane)
-    scaledLegend[lane] = { room: tile.room, walkable: true, opaque: false }
+  const syntheticFloors = new Map<string, string>()
+  const floorSymbolFor = (room: string): string => {
+    const existing = Object.keys(legend).find(symbol => {
+      const tile = legend[symbol]
+      return tile.walkable && !tile.door && tile.room === room
+    }) ?? syntheticFloors.get(room)
+    if (existing) return existing
+    const spare = spareSymbols.shift()
+    if (!spare) throw new Error('No spare symbols left for scaled doorway floors.')
+    scaledLegend[spare] = { room, walkable: true, opaque: false }
+    syntheticFloors.set(room, spare)
+    return spare
   }
 
-  const walkableAt = (x: number, y: number): boolean => legend[rows[y]?.[x] ?? '']?.walkable === true
+  const tileAt = (x: number, y: number): TileDefinition | undefined => legend[rows[y]?.[x] ?? '']
+  const flankSymbol = (tile: TileDefinition | undefined): string => tile?.walkable ? floorSymbolFor(tile.room) : wallSymbol!
 
   const scaledRows = rows.flatMap((row, y) =>
     Array.from({ length: MAP_SCALE }, (_, blockY) => [...row].map((symbol, x) => {
-      const lane = laneSymbols.get(symbol)
-      if (!lane) return symbol.repeat(MAP_SCALE)
+      if (!legend[symbol]?.door) return symbol.repeat(MAP_SCALE)
+      const left = tileAt(x - 1, y), right = tileAt(x + 1, y)
+      const up = tileAt(x, y - 1), down = tileAt(x, y + 1)
+      const horizontalOpen = left?.walkable === true && right?.walkable === true
+      const verticalOpen = up?.walkable === true && down?.walkable === true
+      // The wall plane runs across the passage. Prefer the axis that joins
+      // two different rooms; a door with no open axis defaults to horizontal.
+      const horizontal = horizontalOpen
+        ? !verticalOpen || left!.room !== right!.room || up!.room === down!.room
+        : !verticalOpen
       return Array.from({ length: MAP_SCALE }, (_, blockX) => {
-        if (blockX === BLOCK_CENTRE && blockY === BLOCK_CENTRE) return symbol
-        if (blockY === BLOCK_CENTRE && walkableAt(blockX < BLOCK_CENTRE ? x - 1 : x + 1, y)) return lane
-        if (blockX === BLOCK_CENTRE && walkableAt(x, blockY < BLOCK_CENTRE ? y - 1 : y + 1)) return lane
-        return wallSymbol!
+        const across = horizontal ? blockX : blockY
+        const along = horizontal ? blockY : blockX
+        if (across !== BLOCK_CENTRE) {
+          return flankSymbol(horizontal ? (blockX < BLOCK_CENTRE ? left : right) : (blockY < BLOCK_CENTRE ? up : down))
+        }
+        return along === BLOCK_CENTRE ? symbol : wallSymbol!
       }).join('')
     }).join('')),
   )
@@ -288,7 +307,7 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
       rows: [
         '#DDD#CC#BBB#',
         '#DDDDpCBBBB#',
-        'DDDDCCCCBbBB',
+        'DDDDGCCCBbBB',
         'DDD##CCCBBBB',
         'DDDDeEEE#BBB',
         'DDDDEEEEBBBB',
@@ -301,6 +320,7 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
         C: floor('Commons'),
         B: floor('Bridge'),
         E: floor('Engineering'),
+        G: closedDoor('Commons'),
         b: structure('Bridge', STRUCTURE_KINDS.controlConsole),
         e: structure('Engineering', STRUCTURE_KINDS.storageUnit),
         p: structure('Commons', STRUCTURE_KINDS.displayBank),
@@ -358,7 +378,7 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
       rows: [
         '##AA####BB##',
         '#AAAA##BBBB#',
-        'AAAAAXXBBBBB',
+        'AAAAADXHBBBB',
         'AAA##XX##BBB',
         'AAAAcCCCCBBB',
         '#AAACCCcCBB#',
@@ -371,6 +391,8 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
         X: floor('Crossway'),
         B: floor('Cargo Hold'),
         C: floor('Reactor Deck'),
+        D: closedDoor('Crossway'),
+        H: closedDoor('Cargo Hold'),
         c: structure('Reactor Deck', STRUCTURE_KINDS.storageUnit),
         g: structure('Reactor Deck', STRUCTURE_KINDS.alienGrowth),
       },
