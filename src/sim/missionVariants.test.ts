@@ -4,8 +4,10 @@ import {
   BOARDING_MISSION,
   CIVILIAN_RESCUE_MISSION,
   DISTRESS_TRAP_MISSION,
+  MAP_SCALE,
   PIRATE_RESCUE_MISSION,
   TACTICAL_MISSIONS,
+  cellAt,
   isWalkable,
   key,
   type TacticalMission,
@@ -75,6 +77,23 @@ describe('authored tactical mission definitions', () => {
       }
       expect(reached.size).toBe(mission.map.cells.filter(cell => cell.walkable).length)
     }
+  })
+
+  it('keeps scaled doors one tile wide with a walkable lane and no adjacent doors', () => {
+    for (const mission of TACTICAL_MISSIONS) {
+      for (const door of mission.map.cells.filter(cell => cell.door)) {
+        expect({ x: door.x % MAP_SCALE, y: door.y % MAP_SCALE }).toEqual({ x: 1, y: 1 })
+        const neighbours = [
+          { x: door.x + 1, y: door.y },
+          { x: door.x - 1, y: door.y },
+          { x: door.x, y: door.y + 1 },
+          { x: door.x, y: door.y - 1 },
+        ].map(point => cellAt(mission.map, point))
+        expect(neighbours.some(cell => cell?.walkable)).toBe(true)
+        expect(neighbours.every(cell => !cell?.door)).toBe(true)
+      }
+    }
+    expect(BOARDING_MISSION.map.cells.filter(cell => cell.door)).toHaveLength(2)
   })
 
   it('defines the courier rescue deadline and every combat scenario as elimination', () => {

@@ -261,7 +261,12 @@ class TacticalScene extends Phaser.Scene {
       graphics.fillStyle(!cell.walkable ? 0x03070c : isClosedDoor ? 0x4a3319 : (ROOM_COLORS[cell.room] ?? 0x132b38), 1).fillRect(left, top, CELL - 2, CELL - 2)
       graphics.lineStyle(1, isVisible ? 0x426277 : 0x263946, isVisible ? .45 : .25).strokeRect(left, top, CELL - 2, CELL - 2)
       if (!isVisible) graphics.fillStyle(0x02070c, .58).fillRect(left, top, CELL - 2, CELL - 2)
-      if (cell.door) graphics.fillStyle(isClosedDoor ? 0xf1bd5b : 0x63e3d6, isVisible ? .9 : .4).fillRect(left + CELL / 2 - 4, top + 6, 8, CELL - 14)
+      if (cell.door) {
+        const sideways = cellAt(state.map, { x: x - 1, y })?.walkable || cellAt(state.map, { x: x + 1, y })?.walkable
+        graphics.fillStyle(isClosedDoor ? 0xf1bd5b : 0x63e3d6, isVisible ? .9 : .4)
+        if (sideways) graphics.fillRect(left + CELL / 2 - 4, top + 6, 8, CELL - 14)
+        else graphics.fillRect(left + 6, top + CELL / 2 - 4, CELL - 14, 8)
+      }
       if (cell.structure) {
         const structureColor = STRUCTURE_COLORS[cell.structure.name] ?? 0x8a7550
         const hp = state.structureHp[pointKey] ?? 0

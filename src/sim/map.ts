@@ -91,13 +91,46 @@ interface MapDefinition {
 
 /** Authored rooms are tripled in both dimensions so ships feel like real spaces. */
 export const MAP_SCALE = 3
+const BLOCK_CENTRE = Math.floor(MAP_SCALE / 2)
 
-/** Expand each authored tile into a MAP_SCALE × MAP_SCALE block. */
-export function scaleRows(rows: readonly string[]): string[] {
-  return rows.flatMap(row => {
-    const scaled = [...row].map(symbol => symbol.repeat(MAP_SCALE)).join('')
-    return Array.from({ length: MAP_SCALE }, () => scaled)
+/**
+ * Expand each authored tile into a MAP_SCALE × MAP_SCALE block. Door tiles do
+ * not widen with the rooms: the block keeps a single door cell at its centre,
+ * a one-tile lane runs toward each walkable authored neighbour, and hull wall
+ * frames the rest, so every doorway stays one space across.
+ */
+export function scaleMapDefinition({ rows, legend }: Pick<MapDefinition, 'rows' | 'legend'>): Pick<MapDefinition, 'rows' | 'legend'> {
+  const wallSymbol = Object.keys(legend).find(symbol => {
+    const tile = legend[symbol]
+    return !tile.walkable && tile.opaque && !tile.door && !tile.structure
   })
+  const spareSymbols = [...'abcdefghijklmnopqrstuvwxyz0123456789'].filter(symbol => !(symbol in legend))
+  const laneSymbols = new Map<string, string>()
+  const scaledLegend: Record<string, TileDefinition> = { ...legend }
+  for (const [symbol, tile] of Object.entries(legend)) {
+    if (!tile.door) continue
+    if (!wallSymbol) throw new Error('A map with doors needs a wall tile to frame the scaled doorways.')
+    const lane = spareSymbols.shift()
+    if (!lane) throw new Error('No spare symbols left for scaled doorway lanes.')
+    laneSymbols.set(symbol, lane)
+    scaledLegend[lane] = { room: tile.room, walkable: true, opaque: false }
+  }
+
+  const walkableAt = (x: number, y: number): boolean => legend[rows[y]?.[x] ?? '']?.walkable === true
+
+  const scaledRows = rows.flatMap((row, y) =>
+    Array.from({ length: MAP_SCALE }, (_, blockY) => [...row].map((symbol, x) => {
+      const lane = laneSymbols.get(symbol)
+      if (!lane) return symbol.repeat(MAP_SCALE)
+      return Array.from({ length: MAP_SCALE }, (_, blockX) => {
+        if (blockX === BLOCK_CENTRE && blockY === BLOCK_CENTRE) return symbol
+        if (blockY === BLOCK_CENTRE && walkableAt(blockX < BLOCK_CENTRE ? x - 1 : x + 1, y)) return lane
+        if (blockX === BLOCK_CENTRE && walkableAt(x, blockY < BLOCK_CENTRE ? y - 1 : y + 1)) return lane
+        return wallSymbol!
+      }).join('')
+    }).join('')),
+  )
+  return { rows: scaledRows, legend: scaledLegend }
 }
 
 /** Map an authored coordinate to the centre of its scaled block. */
@@ -182,30 +215,32 @@ export const BOARDING_MISSION: TacticalMission = {
   objective: { kind: 'eliminate', label: 'Locate and eliminate hostiles' },
   visionRange: 18,
   map: defineTacticalMap({
-    rows: scaleRows([
-      '#AAA#MM#CCC#',
-      '#AAADMMMCCC#',
-      'AAAA#MMMCCCC',
-      'AAAA#MdMCCcC',
-      'AAAARRR#WgWW',
-      'AAAARoRRHWWW',
-      '#AAARRR#WWW#',
-      '#AAA#RR#WWW#',
-    ]),
-    legend: {
-      '#': wall,
-      A: floor('Boarding Bay'),
-      M: floor('Medbay'),
-      R: floor('Reactor'),
-      C: floor('Bridge'),
-      W: floor('Weapons'),
-      D: closedDoor('Medbay'),
-      H: closedDoor('Weapons'),
-      o: structure('Reactor', STRUCTURE_KINDS.storageUnit),
-      c: structure('Bridge', STRUCTURE_KINDS.controlConsole),
-      d: structure('Medbay', STRUCTURE_KINDS.displayBank),
-      g: structure('Weapons', STRUCTURE_KINDS.alienGrowth),
-    },
+    ...scaleMapDefinition({
+      rows: [
+        '#AAA#MM#CCC#',
+        '#AAADMMMCCC#',
+        'AAAA#MMMCCCC',
+        'AAAA#MdMCCcC',
+        'AAAARRR#WgWW',
+        'AAAARoRRHWWW',
+        '#AAARRR#WWW#',
+        '#AAA#RR#WWW#',
+      ],
+      legend: {
+        '#': wall,
+        A: floor('Boarding Bay'),
+        M: floor('Medbay'),
+        R: floor('Reactor'),
+        C: floor('Bridge'),
+        W: floor('Weapons'),
+        D: closedDoor('Medbay'),
+        H: closedDoor('Weapons'),
+        o: structure('Reactor', STRUCTURE_KINDS.storageUnit),
+        c: structure('Bridge', STRUCTURE_KINDS.controlConsole),
+        d: structure('Medbay', STRUCTURE_KINDS.displayBank),
+        g: structure('Weapons', STRUCTURE_KINDS.alienGrowth),
+      },
+    }),
     rooms: [
       { name: 'Boarding Bay', label: scalePoint({ x: 1, y: 7 }) },
       { name: 'Medbay', label: scalePoint({ x: 5, y: 0 }) },
@@ -249,26 +284,28 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
   },
   visionRange: 18,
   map: defineTacticalMap({
-    rows: scaleRows([
-      '#DDD#CC#BBB#',
-      '#DDDDpCBBBB#',
-      'DDDDCCCCBbBB',
-      'DDD##CCCBBBB',
-      'DDDDeEEE#BBB',
-      'DDDDEEEEBBBB',
-      '#DDDEEEEBBB#',
-      '#DDD#EE#BBB#',
-    ]),
-    legend: {
-      '#': wall,
-      D: floor('Dock'),
-      C: floor('Commons'),
-      B: floor('Bridge'),
-      E: floor('Engineering'),
-      b: structure('Bridge', STRUCTURE_KINDS.controlConsole),
-      e: structure('Engineering', STRUCTURE_KINDS.storageUnit),
-      p: structure('Commons', STRUCTURE_KINDS.displayBank),
-    },
+    ...scaleMapDefinition({
+      rows: [
+        '#DDD#CC#BBB#',
+        '#DDDDpCBBBB#',
+        'DDDDCCCCBbBB',
+        'DDD##CCCBBBB',
+        'DDDDeEEE#BBB',
+        'DDDDEEEEBBBB',
+        '#DDDEEEEBBB#',
+        '#DDD#EE#BBB#',
+      ],
+      legend: {
+        '#': wall,
+        D: floor('Dock'),
+        C: floor('Commons'),
+        B: floor('Bridge'),
+        E: floor('Engineering'),
+        b: structure('Bridge', STRUCTURE_KINDS.controlConsole),
+        e: structure('Engineering', STRUCTURE_KINDS.storageUnit),
+        p: structure('Commons', STRUCTURE_KINDS.displayBank),
+      },
+    }),
     rooms: [
       { name: 'Dock', label: scalePoint({ x: 1, y: 7 }) },
       { name: 'Commons', label: scalePoint({ x: 5, y: 0 }) },
@@ -317,25 +354,27 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
   objective: { kind: 'eliminate', label: 'Survive the ambush and eliminate the pirates' },
   visionRange: 18,
   map: defineTacticalMap({
-    rows: scaleRows([
-      '##AA####BB##',
-      '#AAAA##BBBB#',
-      'AAAAAXXBBBBB',
-      'AAA##XX##BBB',
-      'AAAAcCCCCBBB',
-      '#AAACCCcCBB#',
-      '#AA##CCCgBB#',
-      '##A##CC##B##',
-    ]),
-    legend: {
-      '#': wall,
-      A: floor('Airlock'),
-      X: floor('Crossway'),
-      B: floor('Cargo Hold'),
-      C: floor('Reactor Deck'),
-      c: structure('Reactor Deck', STRUCTURE_KINDS.storageUnit),
-      g: structure('Reactor Deck', STRUCTURE_KINDS.alienGrowth),
-    },
+    ...scaleMapDefinition({
+      rows: [
+        '##AA####BB##',
+        '#AAAA##BBBB#',
+        'AAAAAXXBBBBB',
+        'AAA##XX##BBB',
+        'AAAAcCCCCBBB',
+        '#AAACCCcCBB#',
+        '#AA##CCCgBB#',
+        '##A##CC##B##',
+      ],
+      legend: {
+        '#': wall,
+        A: floor('Airlock'),
+        X: floor('Crossway'),
+        B: floor('Cargo Hold'),
+        C: floor('Reactor Deck'),
+        c: structure('Reactor Deck', STRUCTURE_KINDS.storageUnit),
+        g: structure('Reactor Deck', STRUCTURE_KINDS.alienGrowth),
+      },
+    }),
     rooms: [
       { name: 'Airlock', label: scalePoint({ x: 2, y: 7 }) },
       { name: 'Crossway', label: scalePoint({ x: 5, y: 2 }) },
