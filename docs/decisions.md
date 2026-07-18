@@ -71,6 +71,14 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Enemy strays use the identical ballistics, so a pirate missing one crew member can wing another.
 - All trajectories resolve against the existing seeded mission RNG, so replays of a seed remain identical. Shot spread beyond a single deflected ray, damage falloff along strays, and destructible terrain remain deferred.
 
+### Destructible geometry — July 17, 2026
+
+- Cover is no longer indestructible scenery: maps carry destructible structures with hit points — display banks (6 HP), storage units (9 HP), alien growths (12 HP), and control consoles (15 HP). At the base 3-damage rifle that is 2-3 rounds for easy pieces and 4-5 for tough ones.
+- Structures block movement and grant cover while standing. Soldiers can fire on them deliberately — furniture does not dodge, so every round hits — and stray rounds from missed shots chew into whatever structure they strike. Enemy strays damage structures too.
+- Damaged structures show their wounds: crack marks and a hit-point bar. At zero HP the piece collapses into visible wreckage that stays on the map but is walkable and grants no cover; strays pass over it.
+- Structure kills never train a soldier's accuracy; only hits on living enemies do.
+- Deferred: structures with mission consequences (destroying the survivor's console, chain explosions), repairable structures, and hull-breach tiles.
+
 ### Dedicated game screen — July 17, 2026
 
 - The landing page is a pitch: hero copy, a Start Game button, and the design/onboarding sections below the fold. No game UI renders on it.
