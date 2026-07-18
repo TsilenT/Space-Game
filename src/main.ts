@@ -34,6 +34,8 @@ import { cellAt, key } from './sim/map'
 import { TurnController } from './turnController'
 
 const CELL = 58, OX = 52, OY = 78
+const VIEW_W = 800, VIEW_H = 600
+const CAM_MARGIN = 96
 const STRUCTURE_COLORS: Record<string, number> = {
   'display bank': 0x4fc3cf,
   'storage unit': 0x8a7550,
@@ -68,6 +70,7 @@ let fireMode: FireModeId = 'snap'
 let lastPlayedShots: readonly ShotResult[] = []
 let animating = false
 let sceneReady = false
+let recenterCamera = true
 let focusNextScreen = true
 let focusNextTactical = false
 let focusNextAction: string | undefined
@@ -115,10 +118,79 @@ function terminalSubtitle(current: GameState): string {
 }
 
 class TacticalScene extends Phaser.Scene {
+  private lastSelectedId?: string
+  private lastFocusKey?: string
+  private userPanned = false
+  private panTween?: Phaser.Tweens.Tween
+
   create() {
     sceneReady = true
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.click(pointer.x, pointer.y))
+    const camera = this.cameras.main
+    let dragging = false
+    let dragOrigin = { x: 0, y: 0 }
+    let scrollOrigin = { x: 0, y: 0 }
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      dragging = false
+      dragOrigin = { x: pointer.x, y: pointer.y }
+      scrollOrigin = { x: camera.scrollX, y: camera.scrollY }
+    })
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (!pointer.isDown) return
+      if (!dragging && Math.hypot(pointer.x - dragOrigin.x, pointer.y - dragOrigin.y) < 8) return
+      dragging = true
+      this.userPanned = true
+      this.stopPan()
+      this.scrollTo(scrollOrigin.x - (pointer.x - dragOrigin.x), scrollOrigin.y - (pointer.y - dragOrigin.y))
+    })
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      // Derive world coordinates from the live scroll: pointer.worldX lags the
+      // camera matrix, which only refreshes on the next preRender.
+      if (!dragging) this.click(pointer.x + camera.scrollX, pointer.y + camera.scrollY)
+      dragging = false
+    })
+    this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _over: unknown, deltaX: number, deltaY: number) => {
+      this.userPanned = true
+      this.stopPan()
+      this.scrollTo(camera.scrollX + deltaX, camera.scrollY + deltaY)
+    })
     renderApp()
+  }
+
+  /** Set the scroll clamped to bounds; direct setScroll is unclamped until the next preRender. */
+  scrollTo(x: number, y: number) {
+    const camera = this.cameras.main
+    const bounds = camera.getBounds()
+    camera.setScroll(
+      Phaser.Math.Clamp(x, bounds.x, Math.max(bounds.x, bounds.right - camera.width)),
+      Phaser.Math.Clamp(y, bounds.y, Math.max(bounds.y, bounds.bottom - camera.height)),
+    )
+  }
+
+  stopPan() {
+    this.panTween?.stop()
+    this.panTween = undefined
+  }
+
+  /** Smoothly pan the camera so (x, y) sits at the viewport centre, clamped to bounds. */
+  focus(x: number, y: number) {
+    const camera = this.cameras.main
+    const bounds = camera.getBounds()
+    this.stopPan()
+    this.panTween = this.tweens.add({
+      targets: camera,
+      scrollX: Phaser.Math.Clamp(x - camera.width / 2, bounds.x, Math.max(bounds.x, bounds.right - camera.width)),
+      scrollY: Phaser.Math.Clamp(y - camera.height / 2, bounds.y, Math.max(bounds.y, bounds.bottom - camera.height)),
+      duration: 280,
+      ease: 'Sine.easeInOut',
+    })
+  }
+
+  ensureVisible(x: number, y: number) {
+    // Derive the view rect from the scroll: camera.worldView only refreshes on
+    // the next preRender, so it is stale right after centerOn or scrollTo.
+    const camera = this.cameras.main
+    const left = camera.scrollX, top = camera.scrollY
+    if (x < left + CAM_MARGIN || x > left + camera.width - CAM_MARGIN || y < top + CAM_MARGIN || y > top + camera.height - CAM_MARGIN) this.focus(x, y)
   }
 
   click(px: number, py: number) {
@@ -140,6 +212,28 @@ class TacticalScene extends Phaser.Scene {
   draw() {
     if (!sceneReady || campaign.phase !== 'mission') return
     this.children.removeAll()
+    const camera = this.cameras.main
+    const worldWidth = OX * 2 + state.map.width * CELL
+    const worldHeight = OY + state.map.height * CELL + 24
+    camera.setBounds(0, 0, worldWidth, worldHeight)
+    const selected = state.units.find(unit => unit.id === state.selectedId)
+    if (selected) {
+      const focusKey = `${selected.id}:${selected.x},${selected.y}`
+      const cx = OX + selected.x * CELL + 28, cy = OY + selected.y * CELL + 28
+      if (recenterCamera) {
+        recenterCamera = false
+        this.userPanned = false
+        this.stopPan()
+        camera.centerOn(cx, cy)
+      } else if (state.selectedId !== this.lastSelectedId) {
+        this.userPanned = false
+        this.focus(cx, cy)
+      } else if (focusKey !== this.lastFocusKey && !this.userPanned) {
+        this.ensureVisible(cx, cy)
+      }
+      this.lastSelectedId = state.selectedId
+      this.lastFocusKey = focusKey
+    }
     const pendingShots = state.lastShots.length > 0 && state.lastShots !== lastPlayedShots ? state.lastShots : []
     const dyingIds = new Set(pendingShots.filter(shot => shot.killed && shot.hitUnitId).map(shot => shot.hitUnitId!))
     const graphics = this.add.graphics()
@@ -147,7 +241,7 @@ class TacticalScene extends Phaser.Scene {
     const explored = new Set(state.explored)
     const openDoors = new Set(state.openDoors)
     const legalTargetIds = new Set(legalTargets(state, fireMode).map(unit => unit.id))
-    graphics.fillStyle(0x07101c, 1).fillRect(0, 0, 800, 600)
+    graphics.fillStyle(0x07101c, 1).fillRect(0, 0, worldWidth, worldHeight)
     for (let y = 0; y < state.map.height; y++) for (let x = 0; x < state.map.width; x++) {
       const point = { x, y }
       const pointKey = key(point)
@@ -223,11 +317,11 @@ class TacticalScene extends Phaser.Scene {
       this.add.text(OX + room.label.x * CELL, OY + room.label.y * CELL + (room.label.y ? 35 : 8), room.name.toUpperCase(), { fontFamily: 'monospace', fontSize: '11px', color: roomVisible ? '#91a9b8' : '#425866' })
     })
     const deadline = state.objective.kind === 'rescue' ? ` / ${String(state.objective.deadlineTurn).padStart(2, '0')}` : ''
-    this.add.text(52, 28, `TURN ${String(state.turn).padStart(2, '0')}${deadline}  //  ${state.phase.toUpperCase()} PHASE`, { fontFamily: 'monospace', fontSize: '18px', color: state.phase === 'player' ? '#63e3d6' : '#ff6670' })
+    this.add.text(52, 28, `TURN ${String(state.turn).padStart(2, '0')}${deadline}  //  ${state.phase.toUpperCase()} PHASE`, { fontFamily: 'monospace', fontSize: '18px', color: state.phase === 'player' ? '#63e3d6' : '#ff6670' }).setScrollFactor(0)
     if (state.status !== 'playing' && pendingShots.length === 0) {
-      graphics.fillStyle(0x02060b, .86).fillRect(0, 0, 800, 600)
-      this.add.text(400, 260, terminalTitle(state), { fontFamily: 'monospace', fontSize: '32px', fontStyle: 'bold', color: state.status === 'victory' ? '#63e3d6' : '#ff6670' }).setOrigin(.5)
-      this.add.text(400, 305, terminalSubtitle(state), { fontFamily: 'monospace', fontSize: '15px', color: '#c7d6df' }).setOrigin(.5)
+      this.add.graphics().setScrollFactor(0).fillStyle(0x02060b, .86).fillRect(0, 0, VIEW_W, VIEW_H)
+      this.add.text(VIEW_W / 2, 260, terminalTitle(state), { fontFamily: 'monospace', fontSize: '32px', fontStyle: 'bold', color: state.status === 'victory' ? '#63e3d6' : '#ff6670' }).setOrigin(.5).setScrollFactor(0)
+      this.add.text(VIEW_W / 2, 305, terminalSubtitle(state), { fontFamily: 'monospace', fontSize: '15px', color: '#c7d6df' }).setOrigin(.5).setScrollFactor(0)
     }
     updateTacticalHud(state)
 
@@ -253,6 +347,7 @@ class TacticalScene extends Phaser.Scene {
       const shot = shots[index]
       const from = center(shot.from)
       const to = center(shot.impact)
+      this.ensureVisible((from.x + to.x) / 2, (from.y + to.y) / 2)
       const tracer = this.add.circle(from.x, from.y, 5, shot.team === 'crew' ? 0xd9fff7 : 0xffb0b6, 1)
       const flight = Math.max(90, Math.hypot(to.x - from.x, to.y - from.y) * 0.85)
       this.tweens.add({
@@ -302,7 +397,9 @@ controller = new TurnController(state, next => {
   state = next
   renderApp()
 })
-new Phaser.Game({ type: Phaser.AUTO, parent: 'phaser-game', width: 800, height: 600, backgroundColor: '#07101c', scene, scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH } })
+new Phaser.Game({ type: Phaser.AUTO, parent: 'phaser-game', width: VIEW_W, height: VIEW_H, backgroundColor: '#07101c', scene, scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH } })
+// Debug handle so automated verification tooling can inspect the live scene.
+;(window as unknown as Record<string, unknown>).__tactical = { scene, gameState: () => state, campaignState: () => campaign }
 
 function campaignStrip(current: CampaignState): string {
   const living = current.crew.filter(crew => crew.hp > 0).length
@@ -639,6 +736,7 @@ function enterMission() {
   if (next === campaign) return
   campaign = next
   fireMode = 'snap'
+  recenterCamera = true
   resetShotAnimation()
   focusNextScreen = true
   focusNextTactical = true
@@ -688,6 +786,7 @@ function restartCampaign() {
   controller.cancelPending()
   campaign = createRun()
   fireMode = 'snap'
+  recenterCamera = true
   resetShotAnimation()
   focusNextScreen = true
   controller.replace(createGame(boardingMissionFor(campaign)))

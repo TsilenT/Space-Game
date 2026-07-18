@@ -16,7 +16,7 @@ function withoutEnemies(mission: TacticalMission): TacticalMission {
 }
 
 describe('authored tactical mission definitions', () => {
-  it('provides four scenarios across three distinct 12x8 authored maps', () => {
+  it('provides four scenarios across three distinct tripled 36x24 maps', () => {
     expect(TACTICAL_MISSIONS).toEqual([
       BOARDING_MISSION,
       PIRATE_RESCUE_MISSION,
@@ -26,7 +26,7 @@ describe('authored tactical mission definitions', () => {
     expect(new Set(TACTICAL_MISSIONS.map(mission => mission.id)).size).toBe(4)
     expect(new Set(TACTICAL_MISSIONS.map(mission => mission.map))).toHaveProperty('size', 3)
     for (const mission of TACTICAL_MISSIONS) {
-      expect(mission.map).toMatchObject({ width: 12, height: 8 })
+      expect(mission.map).toMatchObject({ width: 36, height: 24 })
       expect(mission.crewSpawns).toHaveLength(6)
     }
   })
@@ -83,7 +83,7 @@ describe('authored tactical mission definitions', () => {
     expect(DISTRESS_TRAP_MISSION.objective.kind).toBe('eliminate')
     expect(CIVILIAN_RESCUE_MISSION.objective).toMatchObject({
       kind: 'rescue',
-      target: { x: 10, y: 1 },
+      target: { x: 31, y: 4 },
       deadlineTurn: 8,
     })
   })
@@ -112,10 +112,10 @@ describe('mission objective resolution', () => {
     const base = createGame(CIVILIAN_RESCUE_MISSION)
     const staged: GameState = {
       ...base,
-      units: base.units.map(unit => unit.id === 'ada' ? { ...unit, x: 9, y: 1, ap: 4 } : unit),
+      units: base.units.map(unit => unit.id === 'ada' ? { ...unit, x: 30, y: 4, ap: 4 } : unit),
       selectedId: 'ada',
     }
-    const result = move(staged, 10, 1)
+    const result = move(staged, 31, 4)
 
     expect(result.status).toBe('victory')
     expect(result.resolution).toEqual({ result: 'victory', reason: 'survivor-rescued' })
@@ -141,10 +141,10 @@ describe('mission objective resolution', () => {
     const staged: GameState = {
       ...base,
       turn: 8,
-      units: base.units.map(unit => unit.id === 'ada' ? { ...unit, x: 9, y: 1, ap: 4 } : unit),
+      units: base.units.map(unit => unit.id === 'ada' ? { ...unit, x: 30, y: 4, ap: 4 } : unit),
       selectedId: 'ada',
     }
-    const result = move(staged, 10, 1)
+    const result = move(staged, 31, 4)
 
     expect(result.status).toBe('victory')
     expect(result.resolution?.reason).toBe('survivor-rescued')
@@ -167,7 +167,7 @@ describe('mission objective resolution', () => {
       ...upgraded,
       selectedId: 'ada',
       units: upgraded.units.map(unit => unit.id === 'ada'
-        ? { ...unit, x: 5, y: 2 }
+        ? { ...unit, x: 17, y: 7 }
         : unit.id === 'wraith-1'
           ? { ...unit, hp: 6 }
           : unit),
@@ -179,7 +179,7 @@ describe('mission objective resolution', () => {
     const standardStaged = {
       ...standard,
       selectedId: 'ada',
-      units: standard.units.map(unit => unit.id === 'ada' ? { ...unit, x: 5, y: 2 } : unit),
+      units: standard.units.map(unit => unit.id === 'ada' ? { ...unit, x: 17, y: 7 } : unit),
     }
     const standardResult = attack(standardStaged, 'wraith-1')
     expect(standardResult.units.find(unit => unit.id === 'wraith-1')?.hp).toBe(3)

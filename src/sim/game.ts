@@ -84,19 +84,22 @@ export const FIRE_MODES: Readonly<Record<FireModeId, FireMode>> = {
   aimed: { id: 'aimed', label: 'Aimed shot', cost: 10, shots: 1, factor: 1.15 },
 }
 
+// Authored rooms are tripled (map.ts MAP_SCALE), so per-tile costs and
+// falloffs are one third of their old values to keep the same physical feel.
 export const TURN_TIME_UNITS = 12
-export const MOVE_COST = 3
-const ATTACK_RANGE = 8
+export const MOVE_COST = 1
+const ENEMY_MOVE_STEPS = 3
+const ATTACK_RANGE = 24
 const DEFAULT_CREW_DAMAGE = 3
 const ENEMY_DAMAGE = 2
-const DISTANCE_PENALTY = 3
+const DISTANCE_PENALTY = 1
 const COVER_PENALTY = 20
 const MIN_CHANCE = 5
 const MAX_CHANCE = 95
 const DEFAULT_MISSION_SEED = 1
 const BASE_DEVIATION_DEG = 4
 const DEVIATION_PER_OVERSHOOT = 0.3
-const STRAY_OVERSHOOT_TILES = 4
+const STRAY_OVERSHOOT_TILES = 12
 
 const alive = (unit: Unit): boolean => unit.hp > 0
 const distance = (a: Point, b: Point): number => Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
@@ -598,7 +601,11 @@ export function enemyTurn(input: GameState): GameState {
 
   const enemies = state.units.filter(unit => unit.team === 'enemy' && alive(unit)).sort((a, b) => a.id.localeCompare(b.id))
   for (const enemy of enemies) {
+    // Each enemy takes several steps per turn on the finer tripled grid, or
+    // stops to fire once as soon as a shot presents itself.
+    for (let step = 0; step < ENEMY_MOVE_STEPS; step++) {
     const current = state.units.find(unit => unit.id === enemy.id)!
+    if (!alive(current)) break
     const targets = state.units
       .filter(unit => unit.team === 'crew' && alive(unit))
       .sort((a, b) => distance(current, a) - distance(current, b) || a.id.localeCompare(b.id))
@@ -632,28 +639,31 @@ export function enemyTurn(input: GameState): GameState {
           ...state.log,
         ].slice(0, 5),
       }
-    } else {
-      const wasVisible = isCellVisible(state, current)
-      const options = neighbors(activeMap(state), current)
-        .filter(point => !occupied(state, point, current.id))
-        .sort((a, b) => pathDistance(state, a, nearest, current.id) - pathDistance(state, b, nearest, current.id) || a.y - b.y || a.x - b.x)
-      const destination = options[0]
-      if (destination) {
-        const doorCell = cellAt(state.map, destination)
-        const opensDoor = doorCell?.door && !state.openDoors.includes(key(destination))
-        state = {
-          ...state,
-          units: state.units.map(unit => unit.id === current.id ? { ...unit, ...destination } : unit),
-          openDoors: opensDoor ? [...state.openDoors, key(destination)] : state.openDoors,
-        }
-        if (wasVisible || isCellVisible(state, destination)) {
-          state = { ...state, log: [opensDoor ? `${current.name} forces open the ${doorCell!.room} door.` : `${current.name} advances.`, ...state.log].slice(0, 5) }
-        }
-      }
+      state = evaluateMission(state)
+      if (state.status !== 'playing') return reveal(state)
+      break
+    }
+
+    const wasVisible = isCellVisible(state, current)
+    const options = neighbors(activeMap(state), current)
+      .filter(point => !occupied(state, point, current.id))
+      .sort((a, b) => pathDistance(state, a, nearest, current.id) - pathDistance(state, b, nearest, current.id) || a.y - b.y || a.x - b.x)
+    const destination = options[0]
+    if (!destination) break
+    const doorCell = cellAt(state.map, destination)
+    const opensDoor = doorCell?.door && !state.openDoors.includes(key(destination))
+    state = {
+      ...state,
+      units: state.units.map(unit => unit.id === current.id ? { ...unit, ...destination } : unit),
+      openDoors: opensDoor ? [...state.openDoors, key(destination)] : state.openDoors,
+    }
+    if ((opensDoor || step === 0) && (wasVisible || isCellVisible(state, destination))) {
+      state = { ...state, log: [opensDoor ? `${current.name} forces open the ${doorCell!.room} door.` : `${current.name} advances.`, ...state.log].slice(0, 5) }
     }
 
     state = evaluateMission(state)
     if (state.status !== 'playing') return reveal(state)
+    }
   }
 
   state = evaluateMission(state, true)
