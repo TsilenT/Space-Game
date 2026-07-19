@@ -7,7 +7,6 @@ import {
   MAP_SCALE,
   PIRATE_RESCUE_MISSION,
   TACTICAL_MISSIONS,
-  cellAt,
   isWalkable,
   key,
   type TacticalMission,
@@ -79,24 +78,18 @@ describe('authored tactical mission definitions', () => {
     }
   })
 
-  it('keeps scaled doors one tile wide, on room faces, with no adjacent doors', () => {
+  it('defines every door as an edge between two walkable cells, never occupying a cell', () => {
+    const doorCounts = TACTICAL_MISSIONS.map(mission => mission.map.doors.length)
+    expect(doorCounts).toEqual([2, 2, 1, 2])
     for (const mission of TACTICAL_MISSIONS) {
-      for (const door of mission.map.cells.filter(cell => cell.door)) {
-        expect({ x: door.x % MAP_SCALE, y: door.y % MAP_SCALE }).toEqual({ x: 1, y: 1 })
-        const neighbours = [
-          { x: door.x + 1, y: door.y },
-          { x: door.x - 1, y: door.y },
-          { x: door.x, y: door.y + 1 },
-          { x: door.x, y: door.y - 1 },
-        ].map(point => cellAt(mission.map, point))
-        // A door is an opening in a one-tile wall plane: open floor on both
-        // sides of the passage, wall on the other axis, never another door.
-        expect(neighbours.filter(cell => cell?.walkable).length).toBeGreaterThanOrEqual(2)
-        expect(neighbours.every(cell => !cell?.door)).toBe(true)
+      for (const door of mission.map.doors) {
+        expect(Math.abs(door.a.x - door.b.x) + Math.abs(door.a.y - door.b.y)).toBe(1)
+        expect(isWalkable(mission.map, door.a)).toBe(true)
+        expect(isWalkable(mission.map, door.b)).toBe(true)
+        // The threshold behind the door sits at the centre of its authored block.
+        expect({ x: door.b.x % MAP_SCALE, y: door.b.y % MAP_SCALE }).toEqual({ x: 1, y: 1 })
       }
     }
-    const doorCounts = TACTICAL_MISSIONS.map(mission => mission.map.cells.filter(cell => cell.door).length)
-    expect(doorCounts).toEqual([2, 2, 1, 2])
   })
 
   it('defines the courier rescue deadline and every combat scenario as elimination', () => {

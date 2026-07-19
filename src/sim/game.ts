@@ -1,10 +1,13 @@
 import {
   BOARDING_MISSION,
   cellAt,
+  doorKey,
   isWalkable,
   key,
   roomAt,
   type CellKey,
+  type DoorEdge,
+  type DoorKey,
   type Point,
   type TacticalMap,
   type TacticalMission,
@@ -14,7 +17,8 @@ import {
 } from './map'
 import { hasLineOfSight, visibleCells as cellsVisibleFrom } from './visibility'
 
-export type { Cell, CellKey, Point, Team } from './map'
+export type { Cell, CellKey, DoorEdge, DoorKey, Point, Team } from './map'
+export { doorKey } from './map'
 
 export type Phase = 'player' | 'enemy'
 export type Status = 'playing' | 'victory' | 'defeat'
@@ -71,7 +75,7 @@ export interface GameState {
   turn: number
   selectedId?: string
   explored: CellKey[]
-  openDoors: CellKey[]
+  openDoors: DoorKey[]
   structureHp: Readonly<Record<CellKey, number>>
   rngState: number
   lastShots: readonly ShotResult[]
@@ -137,27 +141,31 @@ function isDestroyed(state: GameState, cellKey: CellKey): boolean {
 }
 
 function activeMap(state: GameState): TacticalMap {
-  const open = new Set(state.openDoors)
   const anyDestroyed = Object.values(state.structureHp).some(hp => hp <= 0)
-  if (open.size === 0 && !anyDestroyed) return state.map
+  if (!anyDestroyed) return state.map
   return {
     ...state.map,
     cells: state.map.cells.map(cell => {
-      if (cell.door && open.has(key(cell))) return { ...cell, opaque: false }
       if (cell.structure && isDestroyed(state, key(cell))) return { ...cell, walkable: true, cover: false }
       return cell
     }),
   }
 }
 
-/** Walkability including opened doors and destroyed structures. */
+/** The door edges that are currently shut: sight and movement cannot cross them. */
+function closedDoorEdges(state: GameState): ReadonlySet<DoorKey> {
+  const open = new Set(state.openDoors)
+  return new Set(state.map.doors.map(door => doorKey(door.a, door.b)).filter(edge => !open.has(edge)))
+}
+
+/** Walkability including destroyed structures. */
 export function isCellWalkable(state: GameState, point: Point): boolean {
   return isWalkable(activeMap(state), point)
 }
 
 export function currentVisibility(state: GameState): Point[] {
   const observers = state.units.filter(unit => unit.team === 'crew' && alive(unit))
-  return cellsVisibleFrom(activeMap(state), observers, state.visionRange)
+  return cellsVisibleFrom(activeMap(state), observers, state.visionRange, closedDoorEdges(state))
 }
 
 export function isCellVisible(state: GameState, point: Point): boolean {
@@ -179,17 +187,13 @@ function occupied(state: GameState, point: Point, ignore?: string): boolean {
   return state.units.some(unit => alive(unit) && unit.id !== ignore && unit.x === point.x && unit.y === point.y)
 }
 
-function isClosedDoor(state: GameState, point: Point): boolean {
-  return cellAt(state.map, point)?.door === true && !state.openDoors.includes(key(point))
-}
-
-function neighbors(map: TacticalMap, point: Point): Point[] {
+function neighbors(map: TacticalMap, point: Point, sealedEdges?: ReadonlySet<DoorKey>): Point[] {
   return [
     { x: point.x + 1, y: point.y },
     { x: point.x - 1, y: point.y },
     { x: point.x, y: point.y + 1 },
     { x: point.x, y: point.y - 1 },
-  ].filter(candidate => isWalkable(map, candidate))
+  ].filter(candidate => isWalkable(map, candidate) && !sealedEdges?.has(doorKey(point, candidate)))
 }
 
 export function selectUnit(state: GameState, id: string): GameState {
@@ -203,6 +207,7 @@ export function legalMoves(state: GameState): Point[] {
   if (!unit || state.phase !== 'player' || state.status !== 'playing' || !alive(unit)) return []
 
   const map = activeMap(state)
+  const sealedEdges = closedDoorEdges(state)
   const visible = new Set(currentVisibility(state).map(key))
   const seen = new Map<CellKey, number>([[key(unit), 0]])
   const queue: Point[] = [unit]
@@ -213,12 +218,12 @@ export function legalMoves(state: GameState): Point[] {
     const cost = seen.get(key(point))!
     if (cost + MOVE_COST > unit.ap) continue
 
-    for (const neighbor of neighbors(map, point)) {
+    for (const neighbor of neighbors(map, point, sealedEdges)) {
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || !visible.has(neighborKey) || occupied(state, neighbor, unit.id)) continue
       seen.set(neighborKey, cost + MOVE_COST)
       moves.push(neighbor)
-      if (!isClosedDoor(state, neighbor)) queue.push(neighbor)
+      queue.push(neighbor)
     }
   }
 
@@ -227,6 +232,7 @@ export function legalMoves(state: GameState): Point[] {
 
 function shortestDistance(state: GameState, start: Point, end: Point, ignore?: string): number {
   const map = activeMap(state)
+  const sealedEdges = closedDoorEdges(state)
   const allowed = new Set(currentVisibility(state).map(key))
   const queue: Array<[Point, number]> = [[start, 0]]
   const seen = new Set<CellKey>([key(start)])
@@ -234,35 +240,72 @@ function shortestDistance(state: GameState, start: Point, end: Point, ignore?: s
   while (queue.length > 0) {
     const [point, cost] = queue.shift()!
     if (key(point) === key(end)) return cost
-    for (const neighbor of neighbors(map, point)) {
+    for (const neighbor of neighbors(map, point, sealedEdges)) {
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || !allowed.has(neighborKey) || occupied(state, neighbor, ignore)) continue
       seen.add(neighborKey)
-      if (neighborKey === key(end) || !isClosedDoor(state, neighbor)) queue.push([neighbor, cost + MOVE_COST])
+      queue.push([neighbor, cost + MOVE_COST])
     }
   }
 
   return Number.POSITIVE_INFINITY
 }
 
+function openDoor(state: GameState, unitName: string, door: DoorEdge): GameState {
+  return reveal({
+    ...state,
+    lastShots: [],
+    openDoors: [...state.openDoors, doorKey(door.a, door.b)],
+    log: [`${unitName} forces open the ${door.room} door.`, ...state.log].slice(0, 5),
+  })
+}
+
 export function move(state: GameState, x: number, y: number): GameState {
   const unit = state.units.find(candidate => candidate.id === state.selectedId)
   const target = { x, y }
-  if (!unit || !legalMoves(state).some(point => key(point) === key(target))) return state
+  if (!unit || state.phase !== 'player' || state.status !== 'playing' || !alive(unit)) return state
+
+  if (!legalMoves(state).some(point => key(point) === key(target))) {
+    // Stepping into an adjacent closed door opens it instead of moving.
+    const door = distance(unit, target) === 1
+      ? state.map.doors.find(candidate => doorKey(candidate.a, candidate.b) === doorKey(unit, target))
+      : undefined
+    if (door && !state.openDoors.includes(doorKey(door.a, door.b))) return openDoor(state, unit.name, door)
+    return state
+  }
 
   const cost = shortestDistance(state, unit, target, unit.id)
-  const doorCell = cellAt(state.map, target)
-  const opensDoor = doorCell?.door && !state.openDoors.includes(key(target))
   return reveal(evaluateMission({
     ...state,
     lastShots: [],
     units: state.units.map(candidate => candidate.id === unit.id ? { ...candidate, x, y, ap: candidate.ap - cost } : candidate),
-    openDoors: opensDoor ? [...state.openDoors, key(target)] : state.openDoors,
-    log: [
-      opensDoor ? `${unit.name} forces open the ${doorCell!.room} door.` : `${unit.name} moved into ${roomAt(state.map, target)}.`,
-      ...state.log,
-    ].slice(0, 5),
+    log: [`${unit.name} moved into ${roomAt(state.map, target)}.`, ...state.log].slice(0, 5),
   }))
+}
+
+/**
+ * Click on a door: the selected soldier walks up to it if needed, then forces
+ * it open, revealing what lies behind. Doors swing shut again at the end of
+ * the turn.
+ */
+export function approachAndOpenDoor(state: GameState, door: DoorEdge): GameState {
+  const unit = state.units.find(candidate => candidate.id === state.selectedId)
+  const edge = doorKey(door.a, door.b)
+  if (!unit || state.phase !== 'player' || state.status !== 'playing' || !alive(unit)) return state
+  if (!state.map.doors.some(candidate => doorKey(candidate.a, candidate.b) === edge) || state.openDoors.includes(edge)) return state
+
+  if ((unit.x === door.a.x && unit.y === door.a.y) || (unit.x === door.b.x && unit.y === door.b.y)) {
+    return openDoor(state, unit.name, door)
+  }
+
+  const legal = new Set(legalMoves(state).map(key))
+  const stops = [door.a, door.b]
+    .filter(point => legal.has(key(point)))
+    .sort((first, second) => shortestDistance(state, unit, first, unit.id) - shortestDistance(state, unit, second, unit.id))
+  if (stops.length === 0) return state
+  const moved = move(state, stops[0].x, stops[0].y)
+  if (moved === state) return state
+  return openDoor(moved, unit.name, door)
 }
 
 function finishMission(state: GameState, resolution: MissionResolution, log: string): GameState {
@@ -312,7 +355,7 @@ function canHit(state: GameState, attacker: Unit, target: Unit): boolean {
     && alive(target)
     && attacker.team !== target.team
     && distance(attacker, target) <= ATTACK_RANGE
-    && hasLineOfSight(activeMap(state), attacker, target)
+    && hasLineOfSight(activeMap(state), attacker, target, closedDoorEdges(state))
 }
 
 /** True when a cover cell shields the target on its shooter-facing side. */
@@ -353,17 +396,29 @@ interface StrayOutcome {
  * excluded: a round that already missed it streaks past. A struck structure
  * is reported so the round can chew into it.
  */
-function traceStray(map: TacticalMap, units: readonly Unit[], shooter: Unit, aimAt: Point, angleRad: number, maxDist: number): StrayOutcome {
+/** True when a stray round cannot pass from one sampled cell to the next because a closed door seals the crossing. */
+function strayCrossesClosedDoor(previous: Point, next: Point, sealedEdges: ReadonlySet<DoorKey>): boolean {
+  const stepX = next.x - previous.x
+  const stepY = next.y - previous.y
+  if (stepX !== 0 && stepY !== 0) {
+    const throughHorizontal = !sealedEdges.has(doorKey(previous, { x: next.x, y: previous.y })) && !sealedEdges.has(doorKey({ x: next.x, y: previous.y }, next))
+    const throughVertical = !sealedEdges.has(doorKey(previous, { x: previous.x, y: next.y })) && !sealedEdges.has(doorKey({ x: previous.x, y: next.y }, next))
+    return !throughHorizontal && !throughVertical
+  }
+  return sealedEdges.has(doorKey(previous, next))
+}
+
+function traceStray(map: TacticalMap, units: readonly Unit[], shooter: Unit, aimAt: Point, angleRad: number, maxDist: number, sealedEdges: ReadonlySet<DoorKey>): StrayOutcome {
   const cos = Math.cos(angleRad)
   const sin = Math.sin(angleRad)
   let lastInBounds: Point = { x: shooter.x, y: shooter.y }
-  let previousKey = key(shooter)
+  let previous: Point = { x: shooter.x, y: shooter.y }
 
   for (let travelled = 0.3; travelled <= maxDist; travelled += 0.2) {
     const cell = { x: Math.round(shooter.x + cos * travelled), y: Math.round(shooter.y + sin * travelled) }
-    const cellKey = key(cell)
-    if (cellKey === previousKey) continue
-    previousKey = cellKey
+    if (cell.x === previous.x && cell.y === previous.y) continue
+    if (strayCrossesClosedDoor(previous, cell, sealedEdges)) return { impact: previous, struckObstacle: true }
+    previous = cell
     if (cell.x === shooter.x && cell.y === shooter.y) continue
 
     const mapCell = cellAt(map, cell)
@@ -389,7 +444,7 @@ interface RoundOutcome {
 }
 
 /** Resolve one round of fire against the to-hit roll, tracing strays into the world. */
-function resolveRound(map: TacticalMap, units: Unit[], structureHp: Readonly<Record<CellKey, number>>, rngInput: number, shooter: Unit, target: Unit, chance: number, damage: number): RoundOutcome {
+function resolveRound(map: TacticalMap, sealedEdges: ReadonlySet<DoorKey>, units: Unit[], structureHp: Readonly<Record<CellKey, number>>, rngInput: number, shooter: Unit, target: Unit, chance: number, damage: number): RoundOutcome {
   let rngState = nextSeed(rngInput)
   const roll = (rngState / 0x1_0000_0000) * 100
   const base = {
@@ -416,7 +471,7 @@ function resolveRound(map: TacticalMap, units: Unit[], structureHp: Readonly<Rec
   const deviationDeg = side * (BASE_DEVIATION_DEG + overshoot * DEVIATION_PER_OVERSHOOT)
   const aim = Math.atan2(target.y - shooter.y, target.x - shooter.x)
   const maxDist = Math.hypot(target.x - shooter.x, target.y - shooter.y) + STRAY_OVERSHOOT_TILES
-  const stray = traceStray(map, units, shooter, target, aim + (deviationDeg * Math.PI) / 180, maxDist)
+  const stray = traceStray(map, units, shooter, target, aim + (deviationDeg * Math.PI) / 180, maxDist, sealedEdges)
   const victim = stray.victimId ? units.find(unit => unit.id === stray.victimId)! : undefined
   const hp = victim ? Math.max(0, victim.hp - damage) : 0
   const structureKey = stray.structureAt ? key(stray.structureAt) : undefined
@@ -449,6 +504,7 @@ export function attack(state: GameState, targetId: string, modeId: FireModeId = 
   const chance = hitChance(state, attacker, target, modeId)
   const damage = state.mission.crewDamage ?? DEFAULT_CREW_DAMAGE
   const map = activeMap(state)
+  const sealedEdges = closedDoorEdges(state)
   let units = state.units
   let structureHp = state.structureHp
   let rngState = state.rngState
@@ -461,7 +517,7 @@ export function attack(state: GameState, targetId: string, modeId: FireModeId = 
     const liveTarget = units.find(unit => unit.id === target.id)!
     if (!alive(liveTarget)) break
     const shooter = units.find(unit => unit.id === attacker.id)!
-    const outcome = resolveRound(map, units, structureHp, rngState, shooter, liveTarget, chance, damage)
+    const outcome = resolveRound(map, sealedEdges, units, structureHp, rngState, shooter, liveTarget, chance, damage)
     units = outcome.units
     structureHp = outcome.structureHp
     rngState = outcome.rngState
@@ -513,7 +569,7 @@ export function canTargetStructure(state: GameState, point: Point, modeId: FireM
     && (state.structureHp[key(point)] ?? 0) > 0
     && distance(attacker, point) <= ATTACK_RANGE
     && isCellVisible(state, point)
-    && hasLineOfSight(activeMap(state), attacker, point)
+    && hasLineOfSight(activeMap(state), attacker, point, closedDoorEdges(state))
 }
 
 /**
@@ -566,13 +622,15 @@ export function attackStructure(state: GameState, x: number, y: number, modeId: 
 
 export function endTurn(state: GameState): GameState {
   if (state.phase !== 'player' || state.status !== 'playing') return state
-  return {
+  // Every door swings shut when the turn ends.
+  return reveal({
     ...state,
     phase: 'enemy',
     selectedId: undefined,
+    openDoors: [],
     units: state.units.map(unit => unit.team === 'enemy' ? { ...unit, ap: TURN_TIME_UNITS } : unit),
     log: ['Enemy activity detected…', ...state.log].slice(0, 5),
-  }
+  })
 }
 
 function pathDistance(state: GameState, start: Point, end: Point, ignore?: string): number {
@@ -617,7 +675,7 @@ export function enemyTurn(input: GameState): GameState {
     const attackTarget = targets.find(target => distance(current, target) <= state.visionRange && canHit(state, current, target))
     if (attackTarget) {
       const chance = hitChance(state, current, attackTarget, 'snap')
-      const outcome = resolveRound(activeMap(state), state.units, state.structureHp, state.rngState, current, attackTarget, chance, ENEMY_DAMAGE)
+      const outcome = resolveRound(activeMap(state), closedDoorEdges(state), state.units, state.structureHp, state.rngState, current, attackTarget, chance, ENEMY_DAMAGE)
       const strayVictim = outcome.shot.hitUnitId && outcome.shot.hitUnitId !== attackTarget.id
         ? outcome.units.find(unit => unit.id === outcome.shot.hitUnitId)!
         : undefined
@@ -644,21 +702,30 @@ export function enemyTurn(input: GameState): GameState {
       break
     }
 
+    // Enemies route through closed doors: the step that would cross a shut
+    // door edge is spent forcing it open instead of moving.
     const wasVisible = isCellVisible(state, current)
     const options = neighbors(activeMap(state), current)
       .filter(point => !occupied(state, point, current.id))
       .sort((a, b) => pathDistance(state, a, nearest, current.id) - pathDistance(state, b, nearest, current.id) || a.y - b.y || a.x - b.x)
     const destination = options[0]
     if (!destination) break
-    const doorCell = cellAt(state.map, destination)
-    const opensDoor = doorCell?.door && !state.openDoors.includes(key(destination))
-    state = {
-      ...state,
-      units: state.units.map(unit => unit.id === current.id ? { ...unit, ...destination } : unit),
-      openDoors: opensDoor ? [...state.openDoors, key(destination)] : state.openDoors,
-    }
-    if ((opensDoor || step === 0) && (wasVisible || isCellVisible(state, destination))) {
-      state = { ...state, log: [opensDoor ? `${current.name} forces open the ${doorCell!.room} door.` : `${current.name} advances.`, ...state.log].slice(0, 5) }
+    const sealedEdge = closedDoorEdges(state).has(doorKey(current, destination))
+      ? state.map.doors.find(door => doorKey(door.a, door.b) === doorKey(current, destination))
+      : undefined
+    if (sealedEdge) {
+      state = { ...state, openDoors: [...state.openDoors, doorKey(sealedEdge.a, sealedEdge.b)] }
+      if (wasVisible || isCellVisible(state, destination)) {
+        state = { ...state, log: [`${current.name} forces open the ${sealedEdge.room} door.`, ...state.log].slice(0, 5) }
+      }
+    } else {
+      state = {
+        ...state,
+        units: state.units.map(unit => unit.id === current.id ? { ...unit, ...destination } : unit),
+      }
+      if (step === 0 && (wasVisible || isCellVisible(state, destination))) {
+        state = { ...state, log: [`${current.name} advances.`, ...state.log].slice(0, 5) }
+      }
     }
 
     state = evaluateMission(state)
@@ -669,10 +736,12 @@ export function enemyTurn(input: GameState): GameState {
   state = evaluateMission(state, true)
   if (state.status !== 'playing') return reveal(state)
 
+  // Doors the enemies forced swing shut again as their phase ends.
   return reveal({
     ...state,
     phase: 'player',
     turn: state.turn + 1,
+    openDoors: [],
     selectedId: state.units.find(unit => unit.team === 'crew' && alive(unit))?.id,
     units: state.units.map(unit => unit.team === 'crew' && alive(unit) ? { ...unit, ap: TURN_TIME_UNITS } : unit),
   })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { FIRE_MODES, TURN_TIME_UNITS, attack, attackStructure, canTargetStructure, createGame, currentVisibility, enemyTurn, endTurn, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type Unit } from './game'
-import { defineTacticalMap, key, type TacticalMission } from './map'
+import { FIRE_MODES, TURN_TIME_UNITS, approachAndOpenDoor, attack, attackStructure, canTargetStructure, createGame, currentVisibility, enemyTurn, endTurn, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type Unit } from './game'
+import { defineTacticalMap, doorKey, key, type TacticalMission } from './map'
 
 // Hunted LCG states: the next roll(s) from these values land where each name says.
 const RNG_SURE_HIT = 1972 // 0.0
@@ -382,15 +382,16 @@ describe('destructible geometry', () => {
 const doorLegend = {
   '.': { room: 'Deck', walkable: true, opaque: false },
   '#': { room: 'Hull', walkable: false, opaque: true },
-  D: { room: 'Vault', walkable: true, opaque: true, door: true },
 }
+
+const VAULT_DOOR = { a: { x: 1, y: 0 }, b: { x: 2, y: 0 }, room: 'Vault' }
 
 function doorMission(): TacticalMission {
   return {
     id: 'door-test',
     objective: { kind: 'eliminate', label: 'Test doors' },
     visionRange: 3,
-    map: defineTacticalMap({ rows: ['..D..'], legend: doorLegend }),
+    map: defineTacticalMap({ rows: ['.....'], legend: doorLegend, doors: [VAULT_DOOR] }),
     crewSpawns: [{ x: 0, y: 0 }],
     units: [
       { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 12, accuracy: 60 },
@@ -399,30 +400,55 @@ function doorMission(): TacticalMission {
   }
 }
 
-describe('closed doors', () => {
-  it('blocks vision and fire like a wall while closed', () => {
+describe('edge doors', () => {
+  it('blocks vision and movement across the closed edge without occupying a cell', () => {
     const game = createGame(doorMission())
-    expect(currentVisibility(game).map(key)).toEqual(['0,0', '1,0', '2,0'])
+    expect(currentVisibility(game).map(key)).toEqual(['0,0', '1,0'])
     expect(game.openDoors).toEqual([])
+    expect(legalMoves(game).map(key)).toEqual(['1,0'])
+    // The far side is neither reachable nor openable from two tiles away.
+    expect(move(game, 2, 0)).toBe(game)
   })
 
-  it('opens when a crew member moves onto it, revealing what is beyond', () => {
+  it('opens when a soldier steps into it, revealing what lies beyond without moving them', () => {
     let game = createGame(doorMission())
-    expect(legalMoves(game)).toContainEqual({ x: 2, y: 0 })
+    game = move(game, 1, 0)
     game = move(game, 2, 0)
-    expect(game.openDoors).toEqual(['2,0'])
+    expect(unit(game, 'ada')).toMatchObject({ x: 1, y: 0 })
+    expect(game.openDoors).toEqual([doorKey(VAULT_DOOR.a, VAULT_DOOR.b)])
     expect(game.log[0]).toBe('Ada forces open the Vault door.')
     expect(currentVisibility(game).map(key)).toEqual(['0,0', '1,0', '2,0', '3,0', '4,0'])
     expect(legalTargets(game).map(unit => unit.id)).toContain('wraith-1')
+    expect(legalMoves(game).map(key)).toContain('2,0')
   })
 
-  it('lets an enemy force a door open while advancing', () => {
-    const mission = doorMission()
-    const positioned = { ...mission, units: mission.units.map(unit => unit.id === 'wraith-1' ? { ...unit, x: 3 } : unit) }
-    const game = createGame(positioned)
-    const result = enemyTurn({ ...game, phase: 'enemy', selectedId: undefined })
-    expect(result.openDoors).toEqual(['2,0'])
-    expect(result.units.find(unit => unit.id === 'wraith-1')).toMatchObject({ x: 2, y: 0 })
+  it('walks the selected soldier up to a clicked door and opens it in one action', () => {
+    const game = createGame(doorMission())
+    const opened = approachAndOpenDoor(game, VAULT_DOOR)
+    expect(unit(opened, 'ada')).toMatchObject({ x: 1, y: 0, ap: TURN_TIME_UNITS - 1 })
+    expect(opened.openDoors).toEqual([doorKey(VAULT_DOOR.a, VAULT_DOOR.b)])
+    expect(opened.log[0]).toBe('Ada forces open the Vault door.')
+  })
+
+  it('swings shut again when the turn ends', () => {
+    let game = createGame(doorMission())
+    game = approachAndOpenDoor(game, VAULT_DOOR)
+    expect(game.openDoors).toHaveLength(1)
+    expect(endTurn(game).openDoors).toEqual([])
+  })
+
+  it('lets an enemy spend a step forcing the door, which closes again after its phase', () => {
+    const game = createGame(doorMission())
+    const first = enemyTurn({ ...game, phase: 'enemy', selectedId: undefined })
+    // Two steps to reach the door, the third spent forcing it open.
+    expect(first.units.find(unit => unit.id === 'wraith-1')).toMatchObject({ x: 2, y: 0 })
+    expect(first.log).toContain('Wraith forces open the Vault door.')
+    expect(first.openDoors).toEqual([])
+    // The door sealed itself, so the wraith forces it again and fires through.
+    const second = enemyTurn({ ...first, phase: 'enemy', selectedId: undefined })
+    expect(second.units.find(unit => unit.id === 'wraith-1')).toMatchObject({ x: 2, y: 0 })
+    expect(second.units.find(unit => unit.id === 'ada')?.hp).toBe(6)
+    expect(second.openDoors).toEqual([])
   })
 
   it('does not let a unit path through a closed door even when shared crew vision reveals the far side', () => {
@@ -430,7 +456,7 @@ describe('closed doors', () => {
       id: 'door-test-two-sided',
       objective: { kind: 'eliminate', label: 'Test doors from both sides' },
       visionRange: 2,
-      map: defineTacticalMap({ rows: ['..D...'], legend: doorLegend }),
+      map: defineTacticalMap({ rows: ['......'], legend: doorLegend, doors: [VAULT_DOOR] }),
       crewSpawns: [{ x: 0, y: 0 }, { x: 4, y: 0 }],
       units: [
         { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 12, accuracy: 60 },
@@ -443,15 +469,11 @@ describe('closed doors', () => {
     // Milo's own view of the far side stitches the whole corridor into shared vision,
     // even though the door between them is still closed.
     expect(currentVisibility(game).map(key)).toEqual(['0,0', '1,0', '2,0', '3,0', '4,0', '5,0'])
-    expect(game.openDoors).toEqual([])
-
-    const moves = legalMoves(game).map(key)
-    expect(moves).toEqual(['1,0', '2,0'])
-    expect(moves).not.toContain('3,0')
+    expect(legalMoves(game).map(key)).toEqual(['1,0'])
     expect(move(game, 3, 0)).toBe(game)
 
-    const opened = move(game, 2, 0)
-    expect(opened.openDoors).toEqual(['2,0'])
+    const opened = approachAndOpenDoor(game, VAULT_DOOR)
+    expect(legalMoves(opened).map(key)).toContain('2,0')
     expect(legalMoves(opened).map(key)).toContain('3,0')
   })
 })
