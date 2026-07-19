@@ -284,21 +284,52 @@ describe('destructible geometry', () => {
     expect(isCellWalkable(game, { x: 2, y: 1 })).toBe(false)
   })
 
-  it('takes deliberate fire without dodging: three snap rounds fell a storage unit', () => {
+  it('rolls to hit like any other shot: three sure-hit snaps fell a storage unit', () => {
     let game = createGame(structureMission())
-    const first = attackStructure(game, 2, 1, 'snap')
+    const first = attackStructure({ ...game, rngState: RNG_SURE_HIT }, 2, 1, 'snap')
     expect(first.structureHp['2,1']).toBe(6)
     expect(unit(first, 'ada').ap).toBe(12 - FIRE_MODES.snap.cost)
-    expect(first.lastShots).toEqual([expect.objectContaining({ hitStructureAt: { x: 2, y: 1 }, structureDestroyed: false, damage: 3 })])
+    expect(first.lastShots).toEqual([expect.objectContaining({ hitStructureAt: { x: 2, y: 1 }, structureDestroyed: false, damage: 3, deviationDeg: 0 })])
     expect(first.log[0]).toContain('tears into the storage unit')
+    expect(first.rngState).not.toBe(RNG_SURE_HIT)
 
-    game = attackStructure(first, 2, 1, 'snap')
-    game = attackStructure(game, 2, 1, 'snap')
+    game = attackStructure({ ...first, rngState: RNG_SURE_HIT }, 2, 1, 'snap')
+    game = attackStructure({ ...game, rngState: RNG_SURE_HIT }, 2, 1, 'snap')
     expect(game.structureHp['2,1']).toBe(0)
     expect(unit(game, 'ada').ap).toBe(0)
     expect(game.lastShots[0]).toMatchObject({ structureDestroyed: true })
     expect(game.log[0]).toContain('destroys the storage unit')
     expect(unit(game, 'ada').hits).toBe(0)
+  })
+
+  it('can miss the crate on the accuracy roll, the round deviating like any stray', () => {
+    const missed = attackStructure({ ...createGame(structureMission()), rngState: RNG_SURE_MISS }, 2, 1, 'snap')
+    expect(missed.log[0]).toContain('misses the storage unit')
+    expect(missed.lastShots[0].deviationDeg).not.toBe(0)
+    // From two tiles out the deviated round still slams into the crate.
+    expect(missed.structureHp['2,1']).toBe(6)
+    expect(missed.log[1]).toContain('slams into the storage unit')
+    expect(unit(missed, 'ada').ap).toBe(12 - FIRE_MODES.snap.cost)
+  })
+
+  it('cannot target a structure through an object standing in the fire lane', () => {
+    const mission = structureMission()
+    const blocked: TacticalMission = {
+      ...mission,
+      map: defineTacticalMap({ rows: ['..........', '.ss.......', '..........'], legend: rangeLegend }),
+    }
+    const game = createGame(blocked)
+    expect(canTargetStructure(game, { x: 2, y: 1 }, 'snap')).toBe(false)
+    expect(attackStructure(game, 2, 1, 'snap')).toBe(game)
+    // The crate in front is still a legal target.
+    expect(canTargetStructure(game, { x: 1, y: 1 }, 'snap')).toBe(true)
+
+    // A bystander standing in the lane blocks the shot the same way.
+    const crowded = createGame({
+      ...mission,
+      units: [...mission.units, { id: 'milo', name: 'Milo', role: 'Engineer', team: 'crew', x: 1, y: 1, hp: 8, ap: 12, accuracy: 45 }],
+    })
+    expect(canTargetStructure(crowded, { x: 2, y: 1 }, 'snap')).toBe(false)
   })
 
   it('stops an auto burst once the structure falls and never overpays rounds', () => {
@@ -307,7 +338,7 @@ describe('destructible geometry', () => {
       ...mission,
       map: defineTacticalMap({ rows: ['..........', '..v.......', '..........'], legend: rangeLegend }),
     }
-    const game = createGame(fragile)
+    const game = { ...createGame(fragile), rngState: RNG_TRIPLE_HIT }
     const burst = attackStructure(game, 2, 1, 'auto')
     expect(burst.structureHp['2,1']).toBe(0)
     expect(burst.lastShots).toHaveLength(2)
@@ -315,9 +346,9 @@ describe('destructible geometry', () => {
   })
 
   it('leaves passable wreckage: soldiers walk through and cover stops working', () => {
-    let game = createGame(structureMission())
+    let game = { ...createGame(structureMission()), rngState: RNG_TRIPLE_HIT }
     game = attackStructure(game, 2, 1, 'auto')
-    game = attackStructure(game, 2, 1, 'snap')
+    game = attackStructure({ ...game, rngState: RNG_SURE_HIT }, 2, 1, 'snap')
     expect(game.structureHp['2,1']).toBe(0)
     expect(isCellWalkable(game, { x: 2, y: 1 })).toBe(true)
     expect(canTargetStructure(game, { x: 2, y: 1 })).toBe(false)

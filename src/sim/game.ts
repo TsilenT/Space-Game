@@ -369,7 +369,7 @@ function targetInCover(state: GameState, shooter: Point, target: Point): boolean
   return shields.some(cell => cell && cellAt(activeMap(state), cell)?.cover === true)
 }
 
-export function hitChance(state: GameState, attacker: Unit, target: Unit, mode: FireModeId): number {
+export function hitChance(state: GameState, attacker: Unit, target: Point, mode: FireModeId): number {
   const base = attacker.accuracy * FIRE_MODES[mode].factor
   const range = DISTANCE_PENALTY * Math.max(0, distance(attacker, target) - 1)
   const cover = targetInCover(state, attacker, target) ? COVER_PENALTY : 0
@@ -443,35 +443,14 @@ interface RoundOutcome {
   readonly shot: ShotResult
 }
 
-/** Resolve one round of fire against the to-hit roll, tracing strays into the world. */
-function resolveRound(map: TacticalMap, sealedEdges: ReadonlySet<DoorKey>, units: Unit[], structureHp: Readonly<Record<CellKey, number>>, rngInput: number, shooter: Unit, target: Unit, chance: number, damage: number): RoundOutcome {
-  let rngState = nextSeed(rngInput)
-  const roll = (rngState / 0x1_0000_0000) * 100
-  const base = {
-    shooterId: shooter.id,
-    team: shooter.team,
-    from: { x: shooter.x, y: shooter.y },
-    aimAt: { x: target.x, y: target.y },
-    damage,
-  }
-
-  if (roll < chance) {
-    const hp = Math.max(0, target.hp - damage)
-    return {
-      rngState,
-      structureHp,
-      units: units.map(unit => unit.id === target.id ? { ...unit, hp } : unit),
-      shot: { ...base, impact: { x: target.x, y: target.y }, hitUnitId: target.id, killed: hp === 0, deviationDeg: 0, struckObstacle: false },
-    }
-  }
-
-  const overshoot = roll - chance
-  rngState = nextSeed(rngState)
+/** A missed round deviates off the aim line and strikes whatever it finds. */
+function resolveMissedRound(map: TacticalMap, sealedEdges: ReadonlySet<DoorKey>, units: Unit[], structureHp: Readonly<Record<CellKey, number>>, rngAfterRoll: number, shooter: Unit, aimAt: Point, overshoot: number, damage: number): RoundOutcome {
+  const rngState = nextSeed(rngAfterRoll)
   const side = rngState / 0x1_0000_0000 < 0.5 ? -1 : 1
   const deviationDeg = side * (BASE_DEVIATION_DEG + overshoot * DEVIATION_PER_OVERSHOOT)
-  const aim = Math.atan2(target.y - shooter.y, target.x - shooter.x)
-  const maxDist = Math.hypot(target.x - shooter.x, target.y - shooter.y) + STRAY_OVERSHOOT_TILES
-  const stray = traceStray(map, units, shooter, target, aim + (deviationDeg * Math.PI) / 180, maxDist, sealedEdges)
+  const aim = Math.atan2(aimAt.y - shooter.y, aimAt.x - shooter.x)
+  const maxDist = Math.hypot(aimAt.x - shooter.x, aimAt.y - shooter.y) + STRAY_OVERSHOOT_TILES
+  const stray = traceStray(map, units, shooter, aimAt, aim + (deviationDeg * Math.PI) / 180, maxDist, sealedEdges)
   const victim = stray.victimId ? units.find(unit => unit.id === stray.victimId)! : undefined
   const hp = victim ? Math.max(0, victim.hp - damage) : 0
   const structureKey = stray.structureAt ? key(stray.structureAt) : undefined
@@ -482,7 +461,10 @@ function resolveRound(map: TacticalMap, sealedEdges: ReadonlySet<DoorKey>, units
     structureHp: struckStructure ? { ...structureHp, [structureKey!]: structureLeft } : structureHp,
     units: victim ? units.map(unit => unit.id === victim.id ? { ...unit, hp } : unit) : units,
     shot: {
-      ...base,
+      shooterId: shooter.id,
+      team: shooter.team,
+      from: { x: shooter.x, y: shooter.y },
+      aimAt: { x: aimAt.x, y: aimAt.y },
       impact: stray.impact,
       hitUnitId: stray.victimId,
       hitStructureAt: struckStructure ? stray.structureAt : undefined,
@@ -493,6 +475,65 @@ function resolveRound(map: TacticalMap, sealedEdges: ReadonlySet<DoorKey>, units
       struckObstacle: stray.struckObstacle,
     },
   }
+}
+
+/** Resolve one round of fire against the to-hit roll, tracing strays into the world. */
+function resolveRound(map: TacticalMap, sealedEdges: ReadonlySet<DoorKey>, units: Unit[], structureHp: Readonly<Record<CellKey, number>>, rngInput: number, shooter: Unit, target: Unit, chance: number, damage: number): RoundOutcome {
+  const rngState = nextSeed(rngInput)
+  const roll = (rngState / 0x1_0000_0000) * 100
+
+  if (roll < chance) {
+    const hp = Math.max(0, target.hp - damage)
+    return {
+      rngState,
+      structureHp,
+      units: units.map(unit => unit.id === target.id ? { ...unit, hp } : unit),
+      shot: {
+        shooterId: shooter.id,
+        team: shooter.team,
+        from: { x: shooter.x, y: shooter.y },
+        aimAt: { x: target.x, y: target.y },
+        impact: { x: target.x, y: target.y },
+        hitUnitId: target.id,
+        damage,
+        killed: hp === 0,
+        deviationDeg: 0,
+        struckObstacle: false,
+      },
+    }
+  }
+
+  return resolveMissedRound(map, sealedEdges, units, structureHp, rngState, shooter, target, roll - chance, damage)
+}
+
+/** Resolve one aimed round at a structure with the same to-hit roll and stray ballistics as unit fire. */
+function resolveStructureRound(map: TacticalMap, sealedEdges: ReadonlySet<DoorKey>, units: Unit[], structureHp: Readonly<Record<CellKey, number>>, rngInput: number, shooter: Unit, point: Point, chance: number, damage: number): RoundOutcome {
+  const rngState = nextSeed(rngInput)
+  const roll = (rngState / 0x1_0000_0000) * 100
+
+  if (roll < chance) {
+    const left = Math.max(0, (structureHp[key(point)] ?? 0) - damage)
+    return {
+      rngState,
+      units,
+      structureHp: { ...structureHp, [key(point)]: left },
+      shot: {
+        shooterId: shooter.id,
+        team: shooter.team,
+        from: { x: shooter.x, y: shooter.y },
+        aimAt: { x: point.x, y: point.y },
+        impact: { x: point.x, y: point.y },
+        hitStructureAt: { x: point.x, y: point.y },
+        structureDestroyed: left === 0,
+        damage,
+        killed: false,
+        deviationDeg: 0,
+        struckObstacle: false,
+      },
+    }
+  }
+
+  return resolveMissedRound(map, sealedEdges, units, structureHp, rngState, shooter, point, roll - chance, damage)
 }
 
 export function attack(state: GameState, targetId: string, modeId: FireModeId = 'snap'): GameState {
@@ -555,6 +596,17 @@ export function attack(state: GameState, targetId: string, modeId: FireModeId = 
   }))
 }
 
+/**
+ * True when a round fired straight at this point reaches it without first
+ * striking a wall, a structure, cover, or a bystander in the fire lane.
+ */
+function fireLaneReaches(state: GameState, shooter: Unit, point: Point): boolean {
+  const aim = Math.atan2(point.y - shooter.y, point.x - shooter.x)
+  const reach = Math.hypot(point.x - shooter.x, point.y - shooter.y)
+  const lane = traceStray(activeMap(state), state.units, shooter, point, aim, reach + 0.5, closedDoorEdges(state))
+  return lane.impact.x === point.x && lane.impact.y === point.y
+}
+
 /** True when the selected soldier can deliberately fire on the structure at this cell. */
 export function canTargetStructure(state: GameState, point: Point, modeId: FireModeId = 'snap'): boolean {
   const attacker = state.units.find(unit => unit.id === state.selectedId)
@@ -570,11 +622,13 @@ export function canTargetStructure(state: GameState, point: Point, modeId: FireM
     && distance(attacker, point) <= ATTACK_RANGE
     && isCellVisible(state, point)
     && hasLineOfSight(activeMap(state), attacker, point, closedDoorEdges(state))
+    && fireLaneReaches(state, attacker, point)
 }
 
 /**
- * Fire deliberately at a structure. Furniture does not dodge: every round
- * hits, so easy pieces fall in 2-3 rifle rounds and tough ones in 4-5.
+ * Fire deliberately at a structure using the same ballistics as unit fire:
+ * every round rolls to hit against accuracy, fire mode, distance, and cover,
+ * and a missed round deviates into the world like any other stray.
  */
 export function attackStructure(state: GameState, x: number, y: number, modeId: FireModeId = 'snap'): GameState {
   const point = { x, y }
@@ -583,40 +637,53 @@ export function attackStructure(state: GameState, x: number, y: number, modeId: 
   const cell = cellAt(state.map, point)!
   const mode = FIRE_MODES[modeId]
   const damage = state.mission.crewDamage ?? DEFAULT_CREW_DAMAGE
+  const chance = hitChance(state, attacker, point, modeId)
   const cellKey = key(point)
+  const map = activeMap(state)
+  const sealedEdges = closedDoorEdges(state)
 
-  let remaining = state.structureHp[cellKey]
+  let units = state.units
+  let structureHp = state.structureHp
+  let rngState = state.rngState
   const shots: ShotResult[] = []
-  for (let round = 0; round < mode.shots && remaining > 0; round++) {
-    remaining = Math.max(0, remaining - damage)
-    shots.push({
-      shooterId: attacker.id,
-      team: attacker.team,
-      from: { x: attacker.x, y: attacker.y },
-      aimAt: point,
-      impact: point,
-      hitStructureAt: point,
-      structureDestroyed: remaining === 0,
-      damage,
-      killed: false,
-      deviationDeg: 0,
-      struckObstacle: false,
-    })
+  const strayReports: string[] = []
+  let directHits = 0
+
+  for (let round = 0; round < mode.shots; round++) {
+    if ((structureHp[cellKey] ?? 0) <= 0) break
+    const shooter = units.find(unit => unit.id === attacker.id)!
+    const outcome = resolveStructureRound(map, sealedEdges, units, structureHp, rngState, shooter, point, chance, damage)
+    units = outcome.units
+    structureHp = outcome.structureHp
+    rngState = outcome.rngState
+    shots.push(outcome.shot)
+    if (outcome.shot.deviationDeg === 0) {
+      directHits += 1
+    } else if (outcome.shot.hitUnitId) {
+      const struck = units.find(unit => unit.id === outcome.shot.hitUnitId)!
+      strayReports.push(`${attacker.name}'s ${mode.label.toLowerCase()} goes wide and hits ${struck.name} for ${damage} damage.`)
+    } else if (outcome.shot.hitStructureAt) {
+      const struckCell = cellAt(state.map, outcome.shot.hitStructureAt)!
+      strayReports.push(outcome.shot.structureDestroyed
+        ? `${attacker.name}'s stray round destroys the ${struckCell.structure!.name}.`
+        : `${attacker.name}'s ${mode.label.toLowerCase()} goes wide and slams into the ${struckCell.structure!.name}.`)
+    }
   }
 
-  const dealt = shots.length * damage
   const label = mode.label.toLowerCase()
+  const remaining = structureHp[cellKey] ?? 0
+  const report = directHits === 0
+    ? `${attacker.name}'s ${label} misses the ${cell.structure!.name} (${chance}%).`
+    : remaining === 0
+      ? `${attacker.name}'s ${label} destroys the ${cell.structure!.name}. The wreckage is passable.`
+      : `${attacker.name}'s ${label} tears into the ${cell.structure!.name} (${directHits * damage} damage).`
   return reveal(evaluateMission({
     ...state,
-    structureHp: { ...state.structureHp, [cellKey]: remaining },
+    rngState,
+    structureHp,
     lastShots: shots,
-    units: state.units.map(unit => unit.id === attacker.id ? { ...unit, ap: unit.ap - mode.cost } : unit),
-    log: [
-      remaining === 0
-        ? `${attacker.name}'s ${label} destroys the ${cell.structure!.name}. The wreckage is passable.`
-        : `${attacker.name}'s ${label} tears into the ${cell.structure!.name} (${dealt} damage).`,
-      ...state.log,
-    ].slice(0, 5),
+    units: units.map(unit => unit.id === attacker.id ? { ...unit, ap: unit.ap - mode.cost } : unit),
+    log: [report, ...strayReports, ...state.log].slice(0, 5),
   }))
 }
 
