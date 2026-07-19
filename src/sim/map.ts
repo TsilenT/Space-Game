@@ -98,7 +98,6 @@ interface TileDefinition {
   readonly room: string
   readonly walkable: boolean
   readonly opaque: boolean
-  readonly door?: boolean
   readonly cover?: boolean
   readonly structure?: StructureDefinition
 }
@@ -111,85 +110,6 @@ interface MapDefinition {
   readonly doors?: readonly DoorEdge[]
 }
 
-/** Authored rooms are tripled in both dimensions so ships feel like real spaces. */
-export const MAP_SCALE = 3
-const BLOCK_CENTRE = Math.floor(MAP_SCALE / 2)
-
-/**
- * Expand each authored tile into a MAP_SCALE × MAP_SCALE block. Door tiles do
- * not widen with the rooms: the block becomes a one-tile-thick wall plane
- * across the passage with a floor threshold as its opening, flanked by the
- * neighbouring rooms' floor. The door itself is an edge on the room-facing
- * side of that threshold, so it occupies no cell and no unit can stand in it.
- */
-export function scaleMapDefinition({ rows, legend }: Pick<MapDefinition, 'rows' | 'legend'>): Pick<MapDefinition, 'rows' | 'legend' | 'doors'> {
-  const wallSymbol = Object.keys(legend).find(symbol => {
-    const tile = legend[symbol]
-    return !tile.walkable && tile.opaque && !tile.door && !tile.structure
-  })
-  if (!wallSymbol && Object.values(legend).some(tile => tile.door)) {
-    throw new Error('A map with doors needs a wall tile to frame the scaled doorways.')
-  }
-  const spareSymbols = [...'abcdefghijklmnopqrstuvwxyz0123456789'].filter(symbol => !(symbol in legend))
-  const scaledLegend: Record<string, TileDefinition> = { ...legend }
-  const syntheticFloors = new Map<string, string>()
-  const floorSymbolFor = (room: string): string => {
-    const existing = Object.keys(legend).find(symbol => {
-      const tile = legend[symbol]
-      return tile.walkable && !tile.door && tile.room === room
-    }) ?? syntheticFloors.get(room)
-    if (existing) return existing
-    const spare = spareSymbols.shift()
-    if (!spare) throw new Error('No spare symbols left for scaled doorway floors.')
-    scaledLegend[spare] = { room, walkable: true, opaque: false }
-    syntheticFloors.set(room, spare)
-    return spare
-  }
-
-  const tileAt = (x: number, y: number): TileDefinition | undefined => legend[rows[y]?.[x] ?? '']
-  const flankSymbol = (tile: TileDefinition | undefined): string => tile?.walkable ? floorSymbolFor(tile.room) : wallSymbol!
-  const doors: DoorEdge[] = []
-
-  const scaledRows = rows.flatMap((row, y) =>
-    Array.from({ length: MAP_SCALE }, (_, blockY) => [...row].map((symbol, x) => {
-      const doorTile = legend[symbol]?.door ? legend[symbol] : undefined
-      if (!doorTile) return symbol.repeat(MAP_SCALE)
-      const left = tileAt(x - 1, y), right = tileAt(x + 1, y)
-      const up = tileAt(x, y - 1), down = tileAt(x, y + 1)
-      const horizontalOpen = left?.walkable === true && right?.walkable === true
-      const verticalOpen = up?.walkable === true && down?.walkable === true
-      // The wall plane runs across the passage. Prefer the axis that joins
-      // two different rooms; a door with no open axis defaults to horizontal.
-      const horizontal = horizontalOpen
-        ? !verticalOpen || left!.room !== right!.room || up!.room === down!.room
-        : !verticalOpen
-      if (blockY === 0) {
-        // Record the door edge once per authored door: it sits between the
-        // threshold and the approach flank outside the door's room.
-        const threshold = scalePoint({ x, y })
-        const approachFirst = horizontal
-          ? (left?.walkable && left.room !== doorTile.room) || right?.walkable !== true
-          : (up?.walkable && up.room !== doorTile.room) || down?.walkable !== true
-        const offset = approachFirst ? -1 : 1
-        const approach = horizontal ? { x: threshold.x + offset, y: threshold.y } : { x: threshold.x, y: threshold.y + offset }
-        doors.push({ a: approach, b: threshold, room: doorTile.room })
-      }
-      return Array.from({ length: MAP_SCALE }, (_, blockX) => {
-        const across = horizontal ? blockX : blockY
-        const along = horizontal ? blockY : blockX
-        if (across !== BLOCK_CENTRE) {
-          return flankSymbol(horizontal ? (blockX < BLOCK_CENTRE ? left : right) : (blockY < BLOCK_CENTRE ? up : down))
-        }
-        return along === BLOCK_CENTRE ? floorSymbolFor(doorTile.room) : wallSymbol!
-      }).join('')
-    }).join('')),
-  )
-  return { rows: scaledRows, legend: scaledLegend, doors }
-}
-
-/** Map an authored coordinate to the centre of its scaled block. */
-export const scalePoint = ({ x, y }: Point): Point => ({ x: x * MAP_SCALE + 1, y: y * MAP_SCALE + 1 })
-
 export function defineTacticalMap(definition: MapDefinition): TacticalMap {
   const height = definition.rows.length
   const width = definition.rows[0]?.length ?? 0
@@ -200,8 +120,7 @@ export function defineTacticalMap(definition: MapDefinition): TacticalMap {
   const cells = definition.rows.flatMap((row, y) => [...row].map((symbol, x) => {
     const tile = definition.legend[symbol]
     if (!tile) throw new Error(`Unknown tactical map symbol "${symbol}" at ${x},${y}.`)
-    const { door: _door, ...template } = tile
-    return { x, y, ...template }
+    return { x, y, ...tile }
   }))
 
   const doors = definition.doors ?? []
@@ -234,7 +153,6 @@ export const roomAt = (map: TacticalMap, point: Point): string => cellAt(map, po
 
 const floor = (room: string): TileDefinition => ({ room, walkable: true, opaque: false })
 const wall: TileDefinition = { room: 'Hull', walkable: false, opaque: true }
-const closedDoor = (room: string): TileDefinition => ({ room, walkable: true, opaque: true, door: true })
 
 /**
  * Destructible furniture: blocks movement and grants cover until its hit
@@ -265,129 +183,161 @@ function crewAt(spawns: readonly Point[]): UnitPlacement[] {
 }
 
 const BOARDING_CREW_SPAWNS = [
-  { x: 1, y: 6 },
-  { x: 1, y: 5 },
-  { x: 2, y: 5 },
-  { x: 2, y: 6 },
-  { x: 3, y: 5 },
-  { x: 3, y: 6 },
-].map(scalePoint)
+  { x: 4, y: 19 },
+  { x: 4, y: 16 },
+  { x: 7, y: 16 },
+  { x: 7, y: 19 },
+  { x: 10, y: 16 },
+  { x: 10, y: 19 },
+]
 
 export const BOARDING_MISSION: TacticalMission = {
   id: 'hostile-boarding-action',
   objective: { kind: 'eliminate', label: 'Locate and eliminate hostiles' },
   visionRange: 18,
   map: defineTacticalMap({
-    ...scaleMapDefinition({
-      rows: [
-        '#AAA#MM#CCC#',
-        '#AAADMMMCCC#',
-        'AAAA#MMMCCCC',
-        'AAAA#MdMCCcC',
-        'AAAARRR#WgWW',
-        'AAAARoRRHWWW',
-        '#AAARRR#WWW#',
-        '#AAA#RR#WWW#',
-      ],
-      legend: {
-        '#': wall,
-        A: floor('Boarding Bay'),
-        M: floor('Medbay'),
-        R: floor('Reactor'),
-        C: floor('Bridge'),
-        W: floor('Weapons'),
-        D: closedDoor('Medbay'),
-        H: closedDoor('Weapons'),
-        o: structure('Reactor', STRUCTURE_KINDS.storageUnit),
-        c: structure('Bridge', STRUCTURE_KINDS.controlConsole),
-        d: structure('Medbay', STRUCTURE_KINDS.displayBank),
-        g: structure('Weapons', STRUCTURE_KINDS.alienGrowth),
-      },
-    }),
+    rows: [
+      '###AAAAAAAAA###MMMMMM###CCCCCCCCC###',
+      '###AAAAAAAAA###MMMMMM###CCCCCCCCC###',
+      '###AAAAAAAAA###MMMMMM###CCCCCCCCC###',
+      '###AAAAAAAAAA#MMMMMMMMMMCCCCCCCCC###',
+      '###AAAAAAAAAAMMMMMMMMMMMCCCCCCCCC###',
+      '###AAAAAAAAAA#MMMMMMMMMMCCCCCCCCC###',
+      'AAAAAAAAAAAA###MMMMMMMMMCCCCCCCCCCCC',
+      'AAAAAAAAAAAA###MMMMMMMMMCCCCCCCCCCCC',
+      'AAAAAAAAAAAA###MMMMMMMMMCCCCCCCCCCCC',
+      'AAAAAAAAAAAA###MMMdddMMMCCCCCCcccCCC',
+      'AAAAAAAAAAAA###MMMdddMMMCCCCCCcccCCC',
+      'AAAAAAAAAAAA###MMMdddMMMCCCCCCcccCCC',
+      'AAAAAAAAAAAARRRRRRRRR###WWWgggWWWWWW',
+      'AAAAAAAAAAAARRRRRRRRR###WWWgggWWWWWW',
+      'AAAAAAAAAAAARRRRRRRRR###WWWgggWWWWWW',
+      'AAAAAAAAAAAARRRoooRRRRRRR#WWWWWWWWWW',
+      'AAAAAAAAAAAARRRoooRRRRRRRWWWWWWWWWWW',
+      'AAAAAAAAAAAARRRoooRRRRRRR#WWWWWWWWWW',
+      '###AAAAAAAAARRRRRRRRR###WWWWWWWWW###',
+      '###AAAAAAAAARRRRRRRRR###WWWWWWWWW###',
+      '###AAAAAAAAARRRRRRRRR###WWWWWWWWW###',
+      '###AAAAAAAAA###RRRRRR###WWWWWWWWW###',
+      '###AAAAAAAAA###RRRRRR###WWWWWWWWW###',
+      '###AAAAAAAAA###RRRRRR###WWWWWWWWW###',
+    ],
+    legend: {
+      '#': wall,
+      A: floor('Boarding Bay'),
+      M: floor('Medbay'),
+      R: floor('Reactor'),
+      C: floor('Bridge'),
+      W: floor('Weapons'),
+      o: structure('Reactor', STRUCTURE_KINDS.storageUnit),
+      c: structure('Bridge', STRUCTURE_KINDS.controlConsole),
+      d: structure('Medbay', STRUCTURE_KINDS.displayBank),
+      g: structure('Weapons', STRUCTURE_KINDS.alienGrowth),
+    },
+    doors: [
+      { a: { x: 12, y: 4 }, b: { x: 13, y: 4 }, room: 'Medbay' },
+      { a: { x: 24, y: 16 }, b: { x: 25, y: 16 }, room: 'Weapons' },
+    ],
     rooms: [
-      { name: 'Boarding Bay', label: scalePoint({ x: 1, y: 7 }) },
-      { name: 'Medbay', label: scalePoint({ x: 5, y: 0 }) },
-      { name: 'Reactor', label: scalePoint({ x: 5, y: 7 }) },
-      { name: 'Bridge', label: scalePoint({ x: 9, y: 0 }) },
-      { name: 'Weapons', label: scalePoint({ x: 9, y: 7 }) },
+      { name: 'Boarding Bay', label: { x: 4, y: 22 } },
+      { name: 'Medbay', label: { x: 16, y: 1 } },
+      { name: 'Reactor', label: { x: 16, y: 22 } },
+      { name: 'Bridge', label: { x: 28, y: 1 } },
+      { name: 'Weapons', label: { x: 28, y: 22 } },
     ],
     systems: [
-      { ...scalePoint({ x: 6, y: 1 }), room: 'Medbay', system: 'MED' },
-      { ...scalePoint({ x: 6, y: 6 }), room: 'Reactor', system: 'CORE' },
-      { ...scalePoint({ x: 10, y: 1 }), room: 'Bridge', system: 'NAV' },
-      { ...scalePoint({ x: 10, y: 6 }), room: 'Weapons', system: 'GUN' },
+      { x: 19, y: 4, room: 'Medbay', system: 'MED' },
+      { x: 19, y: 19, room: 'Reactor', system: 'CORE' },
+      { x: 31, y: 4, room: 'Bridge', system: 'NAV' },
+      { x: 31, y: 19, room: 'Weapons', system: 'GUN' },
     ],
   }),
   crewSpawns: BOARDING_CREW_SPAWNS,
   units: [
     ...crewAt(BOARDING_CREW_SPAWNS),
-    { id: 'wraith-1', name: 'Wraith Kesh', role: 'Void raider', team: 'enemy', ...scalePoint({ x: 6, y: 2 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'wraith-2', name: 'Wraith Oru', role: 'Void raider', team: 'enemy', ...scalePoint({ x: 9, y: 2 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'wraith-3', name: 'Wraith Vek', role: 'Void raider', team: 'enemy', ...scalePoint({ x: 9, y: 6 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'wraith-1', name: 'Wraith Kesh', role: 'Void raider', team: 'enemy', x: 19, y: 7, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'wraith-2', name: 'Wraith Oru', role: 'Void raider', team: 'enemy', x: 28, y: 7, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'wraith-3', name: 'Wraith Vek', role: 'Void raider', team: 'enemy', x: 28, y: 19, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
   ],
 }
 
 const COURIER_CREW_SPAWNS = [
-  { x: 1, y: 6 },
-  { x: 1, y: 5 },
-  { x: 2, y: 5 },
-  { x: 2, y: 6 },
-  { x: 3, y: 5 },
-  { x: 3, y: 6 },
-].map(scalePoint)
+  { x: 4, y: 19 },
+  { x: 4, y: 16 },
+  { x: 7, y: 16 },
+  { x: 7, y: 19 },
+  { x: 10, y: 16 },
+  { x: 10, y: 19 },
+]
 
 export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
   id: 'civilian-courier-rescue',
   objective: {
     kind: 'rescue',
     label: 'Reach the courier survivor before the ship detonates',
-    target: scalePoint({ x: 10, y: 1 }),
+    target: { x: 31, y: 4 },
     targetName: 'Courier survivor',
     deadlineTurn: 8,
   },
   visionRange: 18,
   map: defineTacticalMap({
-    ...scaleMapDefinition({
-      rows: [
-        '#DDD#CC#BBB#',
-        '#DDDDpCBBBB#',
-        'DDDDGCCCBbBB',
-        'DDD##CCCBBBB',
-        'DDDDeEEE#BBB',
-        'DDDDEEEEBBBB',
-        '#DDDEEEEBBB#',
-        '#DDD#EE#BBB#',
-      ],
-      legend: {
-        '#': wall,
-        D: floor('Dock'),
-        C: floor('Commons'),
-        B: floor('Bridge'),
-        E: floor('Engineering'),
-        G: closedDoor('Commons'),
-        b: structure('Bridge', STRUCTURE_KINDS.controlConsole),
-        e: structure('Engineering', STRUCTURE_KINDS.storageUnit),
-        p: structure('Commons', STRUCTURE_KINDS.displayBank),
-      },
-    }),
+    rows: [
+      '###DDDDDDDDD###CCCCCC###BBBBBBBBB###',
+      '###DDDDDDDDD###CCCCCC###BBBBBBBBB###',
+      '###DDDDDDDDD###CCCCCC###BBBBBBBBB###',
+      '###DDDDDDDDDDDDpppCCCBBBBBBBBBBBB###',
+      '###DDDDDDDDDDDDpppCCCBBBBBBBBBBBB###',
+      '###DDDDDDDDDDDDpppCCCBBBBBBBBBBBB###',
+      'DDDDDDDDDDDDD#CCCCCCCCCCBBBbbbBBBBBB',
+      'DDDDDDDDDDDDDCCCCCCCCCCCBBBbbbBBBBBB',
+      'DDDDDDDDDDDDD#CCCCCCCCCCBBBbbbBBBBBB',
+      'DDDDDDDDD######CCCCCCCCCBBBBBBBBBBBB',
+      'DDDDDDDDD######CCCCCCCCCBBBBBBBBBBBB',
+      'DDDDDDDDD######CCCCCCCCCBBBBBBBBBBBB',
+      'DDDDDDDDDDDDeeeEEEEEEEEE###BBBBBBBBB',
+      'DDDDDDDDDDDDeeeEEEEEEEEE###BBBBBBBBB',
+      'DDDDDDDDDDDDeeeEEEEEEEEE###BBBBBBBBB',
+      'DDDDDDDDDDDDEEEEEEEEEEEEBBBBBBBBBBBB',
+      'DDDDDDDDDDDDEEEEEEEEEEEEBBBBBBBBBBBB',
+      'DDDDDDDDDDDDEEEEEEEEEEEEBBBBBBBBBBBB',
+      '###DDDDDDDDDEEEEEEEEEEEEBBBBBBBBB###',
+      '###DDDDDDDDDEEEEEEEEEEEEBBBBBBBBB###',
+      '###DDDDDDDDDEEEEEEEEEEEEBBBBBBBBB###',
+      '###DDDDDDDDD###EEEEEE###BBBBBBBBB###',
+      '###DDDDDDDDD###EEEEEE###BBBBBBBBB###',
+      '###DDDDDDDDD###EEEEEE###BBBBBBBBB###',
+    ],
+    legend: {
+      '#': wall,
+      D: floor('Dock'),
+      C: floor('Commons'),
+      B: floor('Bridge'),
+      E: floor('Engineering'),
+      b: structure('Bridge', STRUCTURE_KINDS.controlConsole),
+      e: structure('Engineering', STRUCTURE_KINDS.storageUnit),
+      p: structure('Commons', STRUCTURE_KINDS.displayBank),
+    },
+    doors: [
+      { a: { x: 12, y: 7 }, b: { x: 13, y: 7 }, room: 'Commons' },
+    ],
     rooms: [
-      { name: 'Dock', label: scalePoint({ x: 1, y: 7 }) },
-      { name: 'Commons', label: scalePoint({ x: 5, y: 0 }) },
-      { name: 'Bridge', label: scalePoint({ x: 9, y: 0 }) },
-      { name: 'Engineering', label: scalePoint({ x: 5, y: 7 }) },
+      { name: 'Dock', label: { x: 4, y: 22 } },
+      { name: 'Commons', label: { x: 16, y: 1 } },
+      { name: 'Bridge', label: { x: 28, y: 1 } },
+      { name: 'Engineering', label: { x: 16, y: 22 } },
     ],
     systems: [
-      { ...scalePoint({ x: 6, y: 1 }), room: 'Commons', system: 'LIFE' },
-      { ...scalePoint({ x: 6, y: 6 }), room: 'Engineering', system: 'CORE' },
-      { ...scalePoint({ x: 10, y: 1 }), room: 'Bridge', system: 'SOS' },
+      { x: 19, y: 4, room: 'Commons', system: 'LIFE' },
+      { x: 19, y: 19, room: 'Engineering', system: 'CORE' },
+      { x: 31, y: 4, room: 'Bridge', system: 'SOS' },
     ],
   }),
   crewSpawns: COURIER_CREW_SPAWNS,
   units: [
     ...crewAt(COURIER_CREW_SPAWNS),
-    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 6, y: 2 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 8, y: 3 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 9, y: 6 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', x: 19, y: 7, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', x: 25, y: 10, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', x: 28, y: 19, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
   ],
 }
 
@@ -405,61 +355,77 @@ export const PIRATE_RESCUE_MISSION: TacticalMission = {
 }
 
 const TRAP_CREW_SPAWNS = [
-  { x: 1, y: 5 },
-  { x: 2, y: 5 },
-  { x: 2, y: 4 },
-  { x: 3, y: 4 },
-  { x: 1, y: 4 },
-  { x: 3, y: 5 },
-].map(scalePoint)
+  { x: 4, y: 16 },
+  { x: 7, y: 16 },
+  { x: 7, y: 13 },
+  { x: 10, y: 13 },
+  { x: 4, y: 13 },
+  { x: 10, y: 16 },
+]
 
 export const DISTRESS_TRAP_MISSION: TacticalMission = {
   id: 'distress-signal-trap',
   objective: { kind: 'eliminate', label: 'Survive the ambush and eliminate the pirates' },
   visionRange: 18,
   map: defineTacticalMap({
-    ...scaleMapDefinition({
-      rows: [
-        '##AA####BB##',
-        '#AAAA##BBBB#',
-        'AAAAADXHBBBB',
-        'AAA##XX##BBB',
-        'AAAAcCCCCBBB',
-        '#AAACCCcCBB#',
-        '#AA##CCCgBB#',
-        '##A##CC##B##',
-      ],
-      legend: {
-        '#': wall,
-        A: floor('Airlock'),
-        X: floor('Crossway'),
-        B: floor('Cargo Hold'),
-        C: floor('Reactor Deck'),
-        D: closedDoor('Crossway'),
-        H: closedDoor('Cargo Hold'),
-        c: structure('Reactor Deck', STRUCTURE_KINDS.storageUnit),
-        g: structure('Reactor Deck', STRUCTURE_KINDS.alienGrowth),
-      },
-    }),
+    rows: [
+      '######AAAAAA############BBBBBB######',
+      '######AAAAAA############BBBBBB######',
+      '######AAAAAA############BBBBBB######',
+      '###AAAAAAAAAAAA######BBBBBBBBBBBB###',
+      '###AAAAAAAAAAAA######BBBBBBBBBBBB###',
+      '###AAAAAAAAAAAA######BBBBBBBBBBBB###',
+      'AAAAAAAAAAAAAAAA#XXXXX#BBBBBBBBBBBBB',
+      'AAAAAAAAAAAAAAAAXXXXXXBBBBBBBBBBBBBB',
+      'AAAAAAAAAAAAAAAA#XXXXX#BBBBBBBBBBBBB',
+      'AAAAAAAAA######XXXXXX######BBBBBBBBB',
+      'AAAAAAAAA######XXXXXX######BBBBBBBBB',
+      'AAAAAAAAA######XXXXXX######BBBBBBBBB',
+      'AAAAAAAAAAAAcccCCCCCCCCCCCCBBBBBBBBB',
+      'AAAAAAAAAAAAcccCCCCCCCCCCCCBBBBBBBBB',
+      'AAAAAAAAAAAAcccCCCCCCCCCCCCBBBBBBBBB',
+      '###AAAAAAAAACCCCCCCCCcccCCCBBBBBB###',
+      '###AAAAAAAAACCCCCCCCCcccCCCBBBBBB###',
+      '###AAAAAAAAACCCCCCCCCcccCCCBBBBBB###',
+      '###AAAAAA######CCCCCCCCCgggBBBBBB###',
+      '###AAAAAA######CCCCCCCCCgggBBBBBB###',
+      '###AAAAAA######CCCCCCCCCgggBBBBBB###',
+      '######AAA######CCCCCC######BBB######',
+      '######AAA######CCCCCC######BBB######',
+      '######AAA######CCCCCC######BBB######',
+    ],
+    legend: {
+      '#': wall,
+      A: floor('Airlock'),
+      X: floor('Crossway'),
+      B: floor('Cargo Hold'),
+      C: floor('Reactor Deck'),
+      c: structure('Reactor Deck', STRUCTURE_KINDS.storageUnit),
+      g: structure('Reactor Deck', STRUCTURE_KINDS.alienGrowth),
+    },
+    doors: [
+      { a: { x: 15, y: 7 }, b: { x: 16, y: 7 }, room: 'Crossway' },
+      { a: { x: 21, y: 7 }, b: { x: 22, y: 7 }, room: 'Cargo Hold' },
+    ],
     rooms: [
-      { name: 'Airlock', label: scalePoint({ x: 2, y: 7 }) },
-      { name: 'Crossway', label: scalePoint({ x: 5, y: 2 }) },
-      { name: 'Cargo Hold', label: scalePoint({ x: 9, y: 0 }) },
-      { name: 'Reactor Deck', label: scalePoint({ x: 5, y: 7 }) },
+      { name: 'Airlock', label: { x: 7, y: 22 } },
+      { name: 'Crossway', label: { x: 16, y: 7 } },
+      { name: 'Cargo Hold', label: { x: 28, y: 1 } },
+      { name: 'Reactor Deck', label: { x: 16, y: 22 } },
     ],
     systems: [
-      { ...scalePoint({ x: 6, y: 2 }), room: 'Crossway', system: 'LOCK' },
-      { ...scalePoint({ x: 6, y: 5 }), room: 'Reactor Deck', system: 'CORE' },
-      { ...scalePoint({ x: 9, y: 5 }), room: 'Cargo Hold', system: 'BAIT' },
+      { x: 19, y: 7, room: 'Crossway', system: 'LOCK' },
+      { x: 19, y: 16, room: 'Reactor Deck', system: 'CORE' },
+      { x: 28, y: 16, room: 'Cargo Hold', system: 'BAIT' },
     ],
   }),
   crewSpawns: TRAP_CREW_SPAWNS,
   units: [
     ...crewAt(TRAP_CREW_SPAWNS),
-    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 6, y: 2 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 8, y: 2 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', ...scalePoint({ x: 9, y: 5 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
-    { id: 'pirate-4', name: 'Mara Quill', role: 'Pirate gunner', team: 'enemy', ...scalePoint({ x: 7, y: 4 }), hp: 6, ap: BASE_TIME_UNITS, accuracy: 55 },
+    { id: 'pirate-1', name: 'Rook Gant', role: 'Pirate raider', team: 'enemy', x: 19, y: 7, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-2', name: 'Vela Pike', role: 'Pirate raider', team: 'enemy', x: 25, y: 7, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-3', name: 'Knox Brill', role: 'Pirate raider', team: 'enemy', x: 28, y: 16, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'pirate-4', name: 'Mara Quill', role: 'Pirate gunner', team: 'enemy', x: 22, y: 13, hp: 6, ap: BASE_TIME_UNITS, accuracy: 55 },
   ],
 }
 

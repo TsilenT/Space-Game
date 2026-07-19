@@ -88,8 +88,8 @@ export const FIRE_MODES: Readonly<Record<FireModeId, FireMode>> = {
   aimed: { id: 'aimed', label: 'Aimed shot', cost: 10, shots: 1, factor: 1.15 },
 }
 
-// Authored rooms are tripled (map.ts MAP_SCALE), so per-tile costs and
-// falloffs are one third of their old values to keep the same physical feel.
+// Maps are authored at 36x24 with rooms several tiles across, so per-tile
+// costs and falloffs are tuned for that fine grid.
 export const TURN_TIME_UNITS = 12
 export const MOVE_COST = 1
 const ENEMY_MOVE_STEPS = 3
@@ -659,8 +659,8 @@ export function enemyTurn(input: GameState): GameState {
 
   const enemies = state.units.filter(unit => unit.team === 'enemy' && alive(unit)).sort((a, b) => a.id.localeCompare(b.id))
   for (const enemy of enemies) {
-    // Each enemy takes several steps per turn on the finer tripled grid, or
-    // stops to fire once as soon as a shot presents itself.
+    // Each enemy takes several steps per turn on the fine grid, or stops to
+    // fire once as soon as a shot presents itself.
     for (let step = 0; step < ENEMY_MOVE_STEPS; step++) {
     const current = state.units.find(unit => unit.id === enemy.id)!
     if (!alive(current)) break
