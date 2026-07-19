@@ -14,10 +14,11 @@ import {
   type TacticalObjective,
   type Team,
   type UnitPlacement,
+  type WallEdge,
 } from './map'
 import { hasLineOfSight, visibleCells as cellsVisibleFrom } from './visibility'
 
-export type { Cell, CellKey, DoorEdge, DoorKey, Point, Team } from './map'
+export type { Cell, CellKey, DoorEdge, DoorKey, Point, Team, WallEdge } from './map'
 export { doorKey } from './map'
 
 export type Phase = 'player' | 'enemy'
@@ -77,6 +78,7 @@ export interface GameState {
   explored: CellKey[]
   openDoors: DoorKey[]
   structureHp: Readonly<Record<CellKey, number>>
+  wallHp: Readonly<Record<DoorKey, number>>
   rngState: number
   lastShots: readonly ShotResult[]
   log: string[]
@@ -96,6 +98,9 @@ const ENEMY_MOVE_STEPS = 3
 const ATTACK_RANGE = 24
 const DEFAULT_CREW_DAMAGE = 3
 const ENEMY_DAMAGE = 2
+/** Interior bulkheads fall to enough fire, but flat armour shrugs off small arms. */
+export const WALL_HP = 12
+export const WALL_ARMOR = 5
 const DISTANCE_PENALTY = 1
 const COVER_PENALTY = 20
 const MIN_CHANCE = 5
@@ -129,6 +134,7 @@ export function createGame(mission: TacticalMission = BOARDING_MISSION): GameSta
     explored: [],
     openDoors: [],
     structureHp: Object.fromEntries(mission.map.cells.filter(cell => cell.structure).map(cell => [key(cell), cell.structure!.hp])),
+    wallHp: Object.fromEntries(mission.map.walls.filter(wall => !wall.hull).map(wall => [doorKey(wall.a, wall.b), WALL_HP])),
     rngState: (mission.seed ?? DEFAULT_MISSION_SEED) >>> 0,
     lastShots: [],
     log: [`Mission started. ${mission.objective.label}.`],
@@ -158,6 +164,21 @@ function closedDoorEdges(state: GameState): ReadonlySet<DoorKey> {
   return new Set(state.map.doors.map(door => doorKey(door.a, door.b)).filter(edge => !open.has(edge)))
 }
 
+/** The wall edges still standing: hull walls always, bulkheads until breached. */
+function intactWallEdges(state: GameState): ReadonlySet<DoorKey> {
+  return new Set(state.map.walls
+    .map(wall => ({ wall, edge: doorKey(wall.a, wall.b) }))
+    .filter(({ wall, edge }) => wall.hull || (state.wallHp[edge] ?? 0) > 0)
+    .map(({ edge }) => edge))
+}
+
+/** Every edge that currently blocks sight, movement, and fire: standing walls plus shut doors. */
+function blockedEdges(state: GameState): ReadonlySet<DoorKey> {
+  const set = new Set<DoorKey>(intactWallEdges(state))
+  for (const edge of closedDoorEdges(state)) set.add(edge)
+  return set
+}
+
 /** Walkability including destroyed structures. */
 export function isCellWalkable(state: GameState, point: Point): boolean {
   return isWalkable(activeMap(state), point)
@@ -165,7 +186,7 @@ export function isCellWalkable(state: GameState, point: Point): boolean {
 
 export function currentVisibility(state: GameState): Point[] {
   const observers = state.units.filter(unit => unit.team === 'crew' && alive(unit))
-  return cellsVisibleFrom(activeMap(state), observers, state.visionRange, closedDoorEdges(state))
+  return cellsVisibleFrom(activeMap(state), observers, state.visionRange, blockedEdges(state))
 }
 
 export function isCellVisible(state: GameState, point: Point): boolean {
@@ -207,7 +228,7 @@ export function legalMoves(state: GameState): Point[] {
   if (!unit || state.phase !== 'player' || state.status !== 'playing' || !alive(unit)) return []
 
   const map = activeMap(state)
-  const sealedEdges = closedDoorEdges(state)
+  const sealedEdges = blockedEdges(state)
   const visible = new Set(currentVisibility(state).map(key))
   const seen = new Map<CellKey, number>([[key(unit), 0]])
   const queue: Point[] = [unit]
@@ -232,7 +253,7 @@ export function legalMoves(state: GameState): Point[] {
 
 function shortestDistance(state: GameState, start: Point, end: Point, ignore?: string): number {
   const map = activeMap(state)
-  const sealedEdges = closedDoorEdges(state)
+  const sealedEdges = blockedEdges(state)
   const allowed = new Set(currentVisibility(state).map(key))
   const queue: Array<[Point, number]> = [[start, 0]]
   const seen = new Set<CellKey>([key(start)])
@@ -355,7 +376,7 @@ function canHit(state: GameState, attacker: Unit, target: Unit): boolean {
     && alive(target)
     && attacker.team !== target.team
     && distance(attacker, target) <= ATTACK_RANGE
-    && hasLineOfSight(activeMap(state), attacker, target, closedDoorEdges(state))
+    && hasLineOfSight(activeMap(state), attacker, target, blockedEdges(state))
 }
 
 /** True when a cover cell shields the target on its shooter-facing side. */
@@ -545,7 +566,7 @@ export function attack(state: GameState, targetId: string, modeId: FireModeId = 
   const chance = hitChance(state, attacker, target, modeId)
   const damage = state.mission.crewDamage ?? DEFAULT_CREW_DAMAGE
   const map = activeMap(state)
-  const sealedEdges = closedDoorEdges(state)
+  const sealedEdges = blockedEdges(state)
   let units = state.units
   let structureHp = state.structureHp
   let rngState = state.rngState
@@ -603,7 +624,7 @@ export function attack(state: GameState, targetId: string, modeId: FireModeId = 
 function fireLaneReaches(state: GameState, shooter: Unit, point: Point): boolean {
   const aim = Math.atan2(point.y - shooter.y, point.x - shooter.x)
   const reach = Math.hypot(point.x - shooter.x, point.y - shooter.y)
-  const lane = traceStray(activeMap(state), state.units, shooter, point, aim, reach + 0.5, closedDoorEdges(state))
+  const lane = traceStray(activeMap(state), state.units, shooter, point, aim, reach + 0.5, blockedEdges(state))
   return lane.impact.x === point.x && lane.impact.y === point.y
 }
 
@@ -621,7 +642,7 @@ export function canTargetStructure(state: GameState, point: Point, modeId: FireM
     && (state.structureHp[key(point)] ?? 0) > 0
     && distance(attacker, point) <= ATTACK_RANGE
     && isCellVisible(state, point)
-    && hasLineOfSight(activeMap(state), attacker, point, closedDoorEdges(state))
+    && hasLineOfSight(activeMap(state), attacker, point, blockedEdges(state))
     && fireLaneReaches(state, attacker, point)
 }
 
@@ -640,7 +661,7 @@ export function attackStructure(state: GameState, x: number, y: number, modeId: 
   const chance = hitChance(state, attacker, point, modeId)
   const cellKey = key(point)
   const map = activeMap(state)
-  const sealedEdges = closedDoorEdges(state)
+  const sealedEdges = blockedEdges(state)
 
   let units = state.units
   let structureHp = state.structureHp
@@ -687,6 +708,118 @@ export function attackStructure(state: GameState, x: number, y: number, modeId: 
   }))
 }
 
+/** The side of a wall the shooter can actually engage: in bounds, inside the ship, seen, and reachable by fire. */
+function wallFiringFlank(state: GameState, attacker: Unit, wall: WallEdge): Point | undefined {
+  return [wall.a, wall.b]
+    .filter(flank => cellAt(state.map, flank) !== undefined && cellAt(state.map, flank)!.void !== true)
+    .sort((first, second) => distance(attacker, first) - distance(attacker, second))
+    .find(flank => distance(attacker, flank) <= ATTACK_RANGE
+      && isCellVisible(state, flank)
+      && hasLineOfSight(activeMap(state), attacker, flank, blockedEdges(state))
+      && ((flank.x === attacker.x && flank.y === attacker.y) || fireLaneReaches(state, attacker, flank)))
+}
+
+/** True when the selected soldier can deliberately fire on this wall edge. */
+export function canTargetWall(state: GameState, wall: WallEdge, modeId: FireModeId = 'snap'): boolean {
+  const attacker = state.units.find(unit => unit.id === state.selectedId)
+  const edge = doorKey(wall.a, wall.b)
+  return state.phase === 'player'
+    && state.status === 'playing'
+    && attacker !== undefined
+    && attacker.team === 'crew'
+    && alive(attacker)
+    && attacker.ap >= FIRE_MODES[modeId].cost
+    && state.map.walls.some(candidate => doorKey(candidate.a, candidate.b) === edge)
+    && (wall.hull || (state.wallHp[edge] ?? 0) > 0)
+    && wallFiringFlank(state, attacker, wall) !== undefined
+}
+
+/**
+ * Fire deliberately at a wall edge with the standard ballistics. Interior
+ * bulkheads lose the round's damage minus their flat armour — today's rifles
+ * bounce off — and hull walls can never be destroyed.
+ */
+export function attackWall(state: GameState, wall: WallEdge, modeId: FireModeId = 'snap'): GameState {
+  if (!canTargetWall(state, wall, modeId)) return state
+  const attacker = state.units.find(unit => unit.id === state.selectedId)!
+  const flank = wallFiringFlank(state, attacker, wall)!
+  const edge = doorKey(wall.a, wall.b)
+  const mode = FIRE_MODES[modeId]
+  const damage = state.mission.crewDamage ?? DEFAULT_CREW_DAMAGE
+  const dealtPerHit = wall.hull ? 0 : Math.max(0, damage - WALL_ARMOR)
+  const chance = hitChance(state, attacker, flank, modeId)
+  const map = activeMap(state)
+  const sealedEdges = blockedEdges(state)
+  const name = wall.hull ? 'hull' : 'bulkhead'
+
+  let units = state.units
+  let structureHp = state.structureHp
+  let wallHp = state.wallHp
+  let rngState = state.rngState
+  const shots: ShotResult[] = []
+  const strayReports: string[] = []
+  let directHits = 0
+
+  for (let round = 0; round < mode.shots; round++) {
+    if (!wall.hull && (wallHp[edge] ?? 0) <= 0) break
+    const shooter = units.find(unit => unit.id === attacker.id)!
+    const rollSeed = nextSeed(rngState)
+    const roll = (rollSeed / 0x1_0000_0000) * 100
+    if (roll < chance) {
+      rngState = rollSeed
+      directHits += 1
+      if (!wall.hull) wallHp = { ...wallHp, [edge]: Math.max(0, wallHp[edge] - dealtPerHit) }
+      shots.push({
+        shooterId: shooter.id,
+        team: shooter.team,
+        from: { x: shooter.x, y: shooter.y },
+        aimAt: { x: flank.x, y: flank.y },
+        impact: { x: flank.x, y: flank.y },
+        damage: dealtPerHit,
+        killed: false,
+        deviationDeg: 0,
+        struckObstacle: true,
+      })
+      continue
+    }
+    const outcome = resolveMissedRound(map, sealedEdges, units, structureHp, rollSeed, shooter, flank, roll - chance, damage)
+    units = outcome.units
+    structureHp = outcome.structureHp
+    rngState = outcome.rngState
+    shots.push(outcome.shot)
+    if (outcome.shot.hitUnitId) {
+      const struck = units.find(unit => unit.id === outcome.shot.hitUnitId)!
+      strayReports.push(`${attacker.name}'s ${mode.label.toLowerCase()} goes wide and hits ${struck.name} for ${damage} damage.`)
+    } else if (outcome.shot.hitStructureAt) {
+      const struckCell = cellAt(state.map, outcome.shot.hitStructureAt)!
+      strayReports.push(outcome.shot.structureDestroyed
+        ? `${attacker.name}'s stray round destroys the ${struckCell.structure!.name}.`
+        : `${attacker.name}'s ${mode.label.toLowerCase()} goes wide and slams into the ${struckCell.structure!.name}.`)
+    }
+  }
+
+  const label = mode.label.toLowerCase()
+  const breached = !wall.hull && (wallHp[edge] ?? 0) <= 0
+  const report = directHits === 0
+    ? `${attacker.name}'s ${label} misses the ${name} (${chance}%).`
+    : wall.hull
+      ? `${attacker.name}'s ${label} glances off the hull. The plating doesn't even scratch.`
+      : breached
+        ? `${attacker.name}'s ${label} breaches the bulkhead!`
+        : dealtPerHit === 0
+          ? `${attacker.name}'s ${label} hammers the bulkhead, but the plating holds.`
+          : `${attacker.name}'s ${label} blasts into the bulkhead (${directHits * dealtPerHit} damage).`
+  return reveal(evaluateMission({
+    ...state,
+    rngState,
+    structureHp,
+    wallHp,
+    lastShots: shots,
+    units: units.map(unit => unit.id === attacker.id ? { ...unit, ap: unit.ap - mode.cost } : unit),
+    log: [report, ...strayReports, ...state.log].slice(0, 5),
+  }))
+}
+
 export function endTurn(state: GameState): GameState {
   if (state.phase !== 'player' || state.status !== 'playing') return state
   // Every door swings shut when the turn ends.
@@ -702,13 +835,16 @@ export function endTurn(state: GameState): GameState {
 
 function pathDistance(state: GameState, start: Point, end: Point, ignore?: string): number {
   const map = activeMap(state)
+  // Walls stop enemy routing outright; closed doors stay routable — an
+  // enemy that reaches one forces it open.
+  const walls = intactWallEdges(state)
   const queue: Array<[Point, number]> = [[start, 0]]
   const seen = new Set<CellKey>([key(start)])
 
   while (queue.length > 0) {
     const [point, cost] = queue.shift()!
     if (key(point) === key(end)) return cost
-    for (const neighbor of neighbors(map, point)) {
+    for (const neighbor of neighbors(map, point, walls)) {
       const neighborKey = key(neighbor)
       if (seen.has(neighborKey) || (neighborKey !== key(end) && occupied(state, neighbor, ignore))) continue
       seen.add(neighborKey)
@@ -742,7 +878,7 @@ export function enemyTurn(input: GameState): GameState {
     const attackTarget = targets.find(target => distance(current, target) <= state.visionRange && canHit(state, current, target))
     if (attackTarget) {
       const chance = hitChance(state, current, attackTarget, 'snap')
-      const outcome = resolveRound(activeMap(state), closedDoorEdges(state), state.units, state.structureHp, state.rngState, current, attackTarget, chance, ENEMY_DAMAGE)
+      const outcome = resolveRound(activeMap(state), blockedEdges(state), state.units, state.structureHp, state.rngState, current, attackTarget, chance, ENEMY_DAMAGE)
       const strayVictim = outcome.shot.hitUnitId && outcome.shot.hitUnitId !== attackTarget.id
         ? outcome.units.find(unit => unit.id === outcome.shot.hitUnitId)!
         : undefined
@@ -772,7 +908,7 @@ export function enemyTurn(input: GameState): GameState {
     // Enemies route through closed doors: the step that would cross a shut
     // door edge is spent forcing it open instead of moving.
     const wasVisible = isCellVisible(state, current)
-    const options = neighbors(activeMap(state), current)
+    const options = neighbors(activeMap(state), current, intactWallEdges(state))
       .filter(point => !occupied(state, point, current.id))
       .sort((a, b) => pathDistance(state, a, nearest, current.id) - pathDistance(state, b, nearest, current.id) || a.y - b.y || a.x - b.x)
     const destination = options[0]

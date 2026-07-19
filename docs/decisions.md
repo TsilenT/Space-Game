@@ -98,6 +98,13 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Turn banner and mission-end overlays are fixed to the screen, not the world. Scroll is always clamped to the map bounds.
 - Deferred: camera zoom, edge-of-screen mouse scrolling, and a minimap.
 
+### Edge walls and breachable bulkheads — July 19, 2026
+
+- Walls live on cell edges like doors. The `#` map symbol now means the void outside the ship; wall edges are derived from the room layout: an indestructible **hull** seals every boundary between ship and void (and the map border), and an armoured **bulkhead** stands on every boundary between two different rooms unless a door is declared there. Rooms that previously met at open archways gained doors so every space stays reachable.
+- Walls block sight, movement, and fire exactly like other obstacles, for both sides. Enemies path through doors but never through walls.
+- The player can deliberately fire on any wall edge with the standard ballistics (to-hit roll, misses stray). Bulkheads have 12 hit points behind a flat armour of 5 — every current rifle round bounces off ("the plating holds") — so breaching walls awaits heavier weapons. A breached bulkhead opens sight and passage like a doorway. Hull walls can be shot but never take a scratch.
+- Deferred: weapons that beat bulkhead armour (breaching charges, heavy plasma), venting atmosphere through hull breaches, and enemies exploiting breaches tactically.
+
 ## Open creative questions
 
 1. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?

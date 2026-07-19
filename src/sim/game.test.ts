@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FIRE_MODES, TURN_TIME_UNITS, approachAndOpenDoor, attack, attackStructure, canTargetStructure, createGame, currentVisibility, enemyTurn, endTurn, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type Unit } from './game'
+import { FIRE_MODES, TURN_TIME_UNITS, WALL_HP, approachAndOpenDoor, attack, attackStructure, attackWall, canTargetStructure, createGame, currentVisibility, enemyTurn, endTurn, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type Unit } from './game'
 import { defineTacticalMap, doorKey, key, type TacticalMission } from './map'
 
 // Hunted LCG states: the next roll(s) from these values land where each name says.
@@ -506,5 +506,79 @@ describe('edge doors', () => {
     const opened = approachAndOpenDoor(game, VAULT_DOOR)
     expect(legalMoves(opened).map(key)).toContain('2,0')
     expect(legalMoves(opened).map(key)).toContain('3,0')
+  })
+})
+
+const wallLegend = {
+  '.': { room: 'Port', walkable: true, opaque: false },
+  ',': { room: 'Starboard', walkable: true, opaque: false },
+  '#': { room: 'Void', walkable: false, opaque: false, void: true },
+}
+
+function wallMission(crewDamage?: number): TacticalMission {
+  return {
+    id: 'wall-test',
+    objective: { kind: 'eliminate', label: 'Test walls' },
+    visionRange: 8,
+    crewDamage,
+    map: defineTacticalMap({ rows: ['...,,,', '######'], legend: wallLegend }),
+    crewSpawns: [{ x: 0, y: 0 }],
+    units: [
+      { id: 'ada', name: 'Ada', role: 'Marine', team: 'crew', x: 0, y: 0, hp: 8, ap: 12, accuracy: 70 },
+      { id: 'wraith-1', name: 'Wraith', role: 'Raider', team: 'enemy', x: 5, y: 0, hp: 6, ap: 12, accuracy: 45 },
+    ],
+  }
+}
+
+describe('edge walls', () => {
+  it('derives a hull around the ship and a bulkhead between the rooms', () => {
+    const map = wallMission().map
+    const bulkheads = map.walls.filter(wall => !wall.hull)
+    expect(bulkheads.map(wall => doorKey(wall.a, wall.b))).toEqual([doorKey({ x: 2, y: 0 }, { x: 3, y: 0 })])
+    // The void below and the map border are sealed by indestructible hull.
+    expect(map.walls.some(wall => wall.hull && doorKey(wall.a, wall.b) === doorKey({ x: 1, y: 0 }, { x: 1, y: 1 }))).toBe(true)
+    expect(map.walls.some(wall => wall.hull && doorKey(wall.a, wall.b) === doorKey({ x: 0, y: 0 }, { x: -1, y: 0 }))).toBe(true)
+  })
+
+  it('blocks sight, movement, and targeting like any other obstacle', () => {
+    const game = createGame(wallMission())
+    expect(currentVisibility(game).map(key)).toEqual(['0,0', '1,0', '2,0'])
+    expect(legalMoves(game).map(key)).toEqual(['1,0', '2,0'])
+    expect(legalTargets(game)).toEqual([])
+  })
+
+  it('shrugs off rifle fire behind its flat armour', () => {
+    const game = { ...createGame(wallMission()), rngState: RNG_SURE_HIT }
+    const wall = game.map.walls.find(candidate => !candidate.hull)!
+    const hit = attackWall(game, wall, 'snap')
+    expect(hit).not.toBe(game)
+    expect(hit.wallHp[doorKey(wall.a, wall.b)]).toBe(WALL_HP)
+    expect(hit.log[0]).toContain('hammers the bulkhead, but the plating holds')
+    expect(unit(hit, 'ada').ap).toBe(12 - FIRE_MODES.snap.cost)
+    expect(hit.rngState).not.toBe(RNG_SURE_HIT)
+  })
+
+  it('falls to enough fire from a weapon that beats the armour, opening sight and passage', () => {
+    let game = { ...createGame(wallMission(9)), rngState: RNG_SURE_HIT }
+    const wall = game.map.walls.find(candidate => !candidate.hull)!
+    game = attackWall(game, wall, 'snap')
+    game = attackWall({ ...game, rngState: RNG_SURE_HIT }, wall, 'snap')
+    game = attackWall({ ...game, rngState: RNG_SURE_HIT }, wall, 'snap')
+    expect(game.wallHp[doorKey(wall.a, wall.b)]).toBe(0)
+    expect(game.log[0]).toContain('breaches the bulkhead')
+    expect(currentVisibility(game).map(key)).toContain('5,0')
+    const refreshed = { ...game, units: game.units.map(u => u.id === 'ada' ? { ...u, ap: 12 } : u) }
+    expect(legalMoves(refreshed).map(key)).toContain('3,0')
+    expect(legalTargets(refreshed).map(u => u.id)).toContain('wraith-1')
+  })
+
+  it('lets the player shoot the hull, which never takes a scratch', () => {
+    const game = { ...createGame(wallMission(9)), rngState: RNG_SURE_HIT }
+    const hull = game.map.walls.find(candidate => candidate.hull && doorKey(candidate.a, candidate.b) === doorKey({ x: 1, y: 0 }, { x: 1, y: 1 }))!
+    const shot = attackWall(game, hull, 'snap')
+    expect(shot).not.toBe(game)
+    expect(shot.log[0]).toContain('glances off the hull')
+    expect(Object.keys(shot.wallHp)).not.toContain(doorKey(hull.a, hull.b))
+    expect(currentVisibility(shot).map(key)).not.toContain('1,1')
   })
 })
