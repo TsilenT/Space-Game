@@ -15,9 +15,29 @@ export interface Cell extends Point {
   readonly room: string
   readonly walkable: boolean
   readonly opaque: boolean
-  readonly door?: boolean
   readonly cover?: boolean
   readonly structure?: StructureDefinition
+}
+
+/**
+ * A door occupies the edge between two adjacent cells rather than a cell of
+ * its own, so no unit can ever stand in a door. `a` is the approach side,
+ * `b` the threshold inside the door's room.
+ */
+export interface DoorEdge {
+  readonly a: Point
+  readonly b: Point
+  readonly room: string
+}
+
+export type DoorKey = `${CellKey}|${CellKey}`
+
+/** Canonical key for the edge between two adjacent cells, in either order. */
+export function doorKey(a: Point, b: Point): DoorKey {
+  const aFirst = a.y < b.y || (a.y === b.y && a.x <= b.x)
+  const first = aFirst ? a : b
+  const second = aFirst ? b : a
+  return `${first.x},${first.y}|${second.x},${second.y}`
 }
 
 export interface RoomDefinition {
@@ -36,6 +56,7 @@ export interface TacticalMap {
   readonly cells: readonly Cell[]
   readonly rooms: readonly RoomDefinition[]
   readonly systems: readonly SystemMarker[]
+  readonly doors: readonly DoorEdge[]
 }
 
 export interface UnitPlacement extends Point {
@@ -87,6 +108,7 @@ interface MapDefinition {
   readonly legend: Readonly<Record<string, TileDefinition>>
   readonly rooms?: readonly RoomDefinition[]
   readonly systems?: readonly SystemMarker[]
+  readonly doors?: readonly DoorEdge[]
 }
 
 /** Authored rooms are tripled in both dimensions so ships feel like real spaces. */
@@ -96,11 +118,11 @@ const BLOCK_CENTRE = Math.floor(MAP_SCALE / 2)
 /**
  * Expand each authored tile into a MAP_SCALE × MAP_SCALE block. Door tiles do
  * not widen with the rooms: the block becomes a one-tile-thick wall plane
- * across the passage with a single door cell as its opening, flanked by the
- * neighbouring rooms' floor. The door sits on the face of the wall, so it is
- * one space wide and visible from inside both rooms it connects.
+ * across the passage with a floor threshold as its opening, flanked by the
+ * neighbouring rooms' floor. The door itself is an edge on the room-facing
+ * side of that threshold, so it occupies no cell and no unit can stand in it.
  */
-export function scaleMapDefinition({ rows, legend }: Pick<MapDefinition, 'rows' | 'legend'>): Pick<MapDefinition, 'rows' | 'legend'> {
+export function scaleMapDefinition({ rows, legend }: Pick<MapDefinition, 'rows' | 'legend'>): Pick<MapDefinition, 'rows' | 'legend' | 'doors'> {
   const wallSymbol = Object.keys(legend).find(symbol => {
     const tile = legend[symbol]
     return !tile.walkable && tile.opaque && !tile.door && !tile.structure
@@ -126,10 +148,12 @@ export function scaleMapDefinition({ rows, legend }: Pick<MapDefinition, 'rows' 
 
   const tileAt = (x: number, y: number): TileDefinition | undefined => legend[rows[y]?.[x] ?? '']
   const flankSymbol = (tile: TileDefinition | undefined): string => tile?.walkable ? floorSymbolFor(tile.room) : wallSymbol!
+  const doors: DoorEdge[] = []
 
   const scaledRows = rows.flatMap((row, y) =>
     Array.from({ length: MAP_SCALE }, (_, blockY) => [...row].map((symbol, x) => {
-      if (!legend[symbol]?.door) return symbol.repeat(MAP_SCALE)
+      const doorTile = legend[symbol]?.door ? legend[symbol] : undefined
+      if (!doorTile) return symbol.repeat(MAP_SCALE)
       const left = tileAt(x - 1, y), right = tileAt(x + 1, y)
       const up = tileAt(x, y - 1), down = tileAt(x, y + 1)
       const horizontalOpen = left?.walkable === true && right?.walkable === true
@@ -139,17 +163,28 @@ export function scaleMapDefinition({ rows, legend }: Pick<MapDefinition, 'rows' 
       const horizontal = horizontalOpen
         ? !verticalOpen || left!.room !== right!.room || up!.room === down!.room
         : !verticalOpen
+      if (blockY === 0) {
+        // Record the door edge once per authored door: it sits between the
+        // threshold and the approach flank outside the door's room.
+        const threshold = scalePoint({ x, y })
+        const approachFirst = horizontal
+          ? (left?.walkable && left.room !== doorTile.room) || right?.walkable !== true
+          : (up?.walkable && up.room !== doorTile.room) || down?.walkable !== true
+        const offset = approachFirst ? -1 : 1
+        const approach = horizontal ? { x: threshold.x + offset, y: threshold.y } : { x: threshold.x, y: threshold.y + offset }
+        doors.push({ a: approach, b: threshold, room: doorTile.room })
+      }
       return Array.from({ length: MAP_SCALE }, (_, blockX) => {
         const across = horizontal ? blockX : blockY
         const along = horizontal ? blockY : blockX
         if (across !== BLOCK_CENTRE) {
           return flankSymbol(horizontal ? (blockX < BLOCK_CENTRE ? left : right) : (blockY < BLOCK_CENTRE ? up : down))
         }
-        return along === BLOCK_CENTRE ? symbol : wallSymbol!
+        return along === BLOCK_CENTRE ? floorSymbolFor(doorTile.room) : wallSymbol!
       }).join('')
     }).join('')),
   )
-  return { rows: scaledRows, legend: scaledLegend }
+  return { rows: scaledRows, legend: scaledLegend, doors }
 }
 
 /** Map an authored coordinate to the centre of its scaled block. */
@@ -165,8 +200,16 @@ export function defineTacticalMap(definition: MapDefinition): TacticalMap {
   const cells = definition.rows.flatMap((row, y) => [...row].map((symbol, x) => {
     const tile = definition.legend[symbol]
     if (!tile) throw new Error(`Unknown tactical map symbol "${symbol}" at ${x},${y}.`)
-    return { x, y, ...tile }
+    const { door: _door, ...template } = tile
+    return { x, y, ...template }
   }))
+
+  const doors = definition.doors ?? []
+  for (const door of doors) {
+    if (Math.abs(door.a.x - door.b.x) + Math.abs(door.a.y - door.b.y) !== 1) {
+      throw new Error(`Door edge ${doorKey(door.a, door.b)} must join two adjacent cells.`)
+    }
+  }
 
   return {
     width,
@@ -174,6 +217,7 @@ export function defineTacticalMap(definition: MapDefinition): TacticalMap {
     cells,
     rooms: definition.rooms ?? [],
     systems: definition.systems ?? [],
+    doors,
   }
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { attack, createGame, currentVisibility, enemyTurn, legalTargets, move, selectUnit } from './game'
-import { BOARDING_MISSION, MAP_SCALE, defineTacticalMap, key, type TacticalMission } from './map'
+import { BOARDING_MISSION, MAP_SCALE, defineTacticalMap, doorKey, key, type TacticalMission } from './map'
 import { hasLineOfSight, visibleCells } from './visibility'
 
 const legend = {
@@ -46,6 +46,15 @@ describe('deterministic line of sight', () => {
         expect(hasLineOfSight(BOARDING_MISSION.map, from, to)).toBe(hasLineOfSight(BOARDING_MISSION.map, to, from))
       }
     }
+  })
+
+  it('blocks sight across a closed door edge and restores it when open', () => {
+    const map = defineTacticalMap({ rows: ['.....'], legend, doors: [{ a: { x: 1, y: 0 }, b: { x: 2, y: 0 }, room: 'Deck' }] })
+    const closed = new Set([doorKey({ x: 1, y: 0 }, { x: 2, y: 0 })])
+    expect(hasLineOfSight(map, { x: 0, y: 0 }, { x: 4, y: 0 }, closed)).toBe(false)
+    expect(hasLineOfSight(map, { x: 0, y: 0 }, { x: 1, y: 0 }, closed)).toBe(true)
+    expect(hasLineOfSight(map, { x: 4, y: 0 }, { x: 1, y: 0 }, closed)).toBe(false)
+    expect(hasLineOfSight(map, { x: 0, y: 0 }, { x: 4, y: 0 })).toBe(true)
   })
 
   it('returns visible cells in canonical row-major order', () => {

@@ -29,7 +29,7 @@ import {
   type SystemKind,
 } from './sim/campaign'
 import { revealedSystemIds, systemById, type StarSystem } from './sim/galaxy'
-import { FIRE_MODES, attack, attackStructure, canTargetStructure, createGame, currentVisibility, type FireModeId, type GameState, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type ShotResult } from './sim/game'
+import { FIRE_MODES, approachAndOpenDoor, attack, attackStructure, canTargetStructure, createGame, currentVisibility, type DoorEdge, doorKey, type FireModeId, type GameState, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type ShotResult } from './sim/game'
 import { cellAt, key } from './sim/map'
 import { TurnController } from './turnController'
 
@@ -185,6 +185,20 @@ class TacticalScene extends Phaser.Scene {
     })
   }
 
+  /** The closed, explored door whose edge bar sits under this world point, if any. */
+  doorAt(px: number, py: number): DoorEdge | undefined {
+    return state.map.doors.find(door => {
+      if (state.openDoors.includes(doorKey(door.a, door.b))) return false
+      if (!state.explored.includes(key(door.a)) && !state.explored.includes(key(door.b))) return false
+      const vertical = door.a.y === door.b.y
+      const lineX = OX + Math.max(door.a.x, door.b.x) * CELL - 1
+      const lineY = OY + Math.max(door.a.y, door.b.y) * CELL - 1
+      return vertical
+        ? Math.abs(px - lineX) <= 12 && py >= OY + door.a.y * CELL && py < OY + (door.a.y + 1) * CELL
+        : Math.abs(py - lineY) <= 12 && px >= OX + door.a.x * CELL && px < OX + (door.a.x + 1) * CELL
+    })
+  }
+
   ensureVisible(x: number, y: number) {
     // Derive the view rect from the scroll: camera.worldView only refreshes on
     // the next preRender, so it is stale right after centerOn or scrollTo.
@@ -195,6 +209,11 @@ class TacticalScene extends Phaser.Scene {
 
   click(px: number, py: number) {
     if (animating || transitionLocked || campaign.phase !== 'mission' || state.phase !== 'player' || state.status !== 'playing') return
+    const clickedDoor = this.doorAt(px, py)
+    if (clickedDoor) {
+      controller.replace(approachAndOpenDoor(state, clickedDoor))
+      return
+    }
     const x = Math.floor((px - OX) / CELL), y = Math.floor((py - OY) / CELL)
     if (canTargetStructure(state, { x, y }, fireMode)) {
       controller.replace(attackStructure(state, x, y, fireMode))
@@ -248,7 +267,6 @@ class TacticalScene extends Phaser.Scene {
       const cell = cellAt(state.map, point)!
       const isExplored = explored.has(pointKey)
       const isVisible = visible.has(pointKey)
-      const isClosedDoor = cell.door && !openDoors.has(pointKey)
       const left = OX + x * CELL
       const top = OY + y * CELL
 
@@ -258,15 +276,9 @@ class TacticalScene extends Phaser.Scene {
         continue
       }
 
-      graphics.fillStyle(!cell.walkable ? 0x03070c : isClosedDoor ? 0x4a3319 : (ROOM_COLORS[cell.room] ?? 0x132b38), 1).fillRect(left, top, CELL - 2, CELL - 2)
+      graphics.fillStyle(!cell.walkable ? 0x03070c : (ROOM_COLORS[cell.room] ?? 0x132b38), 1).fillRect(left, top, CELL - 2, CELL - 2)
       graphics.lineStyle(1, isVisible ? 0x426277 : 0x263946, isVisible ? .45 : .25).strokeRect(left, top, CELL - 2, CELL - 2)
       if (!isVisible) graphics.fillStyle(0x02070c, .58).fillRect(left, top, CELL - 2, CELL - 2)
-      if (cell.door) {
-        const sideways = cellAt(state.map, { x: x - 1, y })?.walkable || cellAt(state.map, { x: x + 1, y })?.walkable
-        graphics.fillStyle(isClosedDoor ? 0xf1bd5b : 0x63e3d6, isVisible ? .9 : .4)
-        if (sideways) graphics.fillRect(left + CELL / 2 - 4, top + 6, 8, CELL - 14)
-        else graphics.fillRect(left + 6, top + CELL / 2 - 4, CELL - 14, 8)
-      }
       if (cell.structure) {
         const structureColor = STRUCTURE_COLORS[cell.structure.name] ?? 0x8a7550
         const hp = state.structureHp[pointKey] ?? 0
@@ -292,6 +304,29 @@ class TacticalScene extends Phaser.Scene {
       } else if (cell.cover) {
         graphics.fillStyle(0x8a7550, isVisible ? .85 : .4).fillRoundedRect(left + 9, top + 9, CELL - 20, CELL - 20, 4)
         graphics.lineStyle(2, 0x5a4b33, isVisible ? .9 : .45).strokeRoundedRect(left + 9, top + 9, CELL - 20, CELL - 20, 4)
+      }
+    }
+    for (const door of state.map.doors) {
+      if (!explored.has(key(door.a)) && !explored.has(key(door.b))) continue
+      const open = openDoors.has(doorKey(door.a, door.b))
+      const doorVisible = visible.has(key(door.a)) || visible.has(key(door.b))
+      const vertical = door.a.y === door.b.y
+      const lineX = OX + Math.max(door.a.x, door.b.x) * CELL - 1
+      const lineY = OY + Math.max(door.a.y, door.b.y) * CELL - 1
+      graphics.fillStyle(open ? 0x63e3d6 : 0xf1bd5b, doorVisible ? .95 : .45)
+      if (vertical) {
+        // The door sits on the shared edge between the two cells.
+        if (open) {
+          graphics.fillRect(lineX - 4, OY + door.a.y * CELL + 2, 8, 13)
+          graphics.fillRect(lineX - 4, OY + door.a.y * CELL + CELL - 17, 8, 13)
+        } else {
+          graphics.fillRect(lineX - 4, OY + door.a.y * CELL + 2, 8, CELL - 6)
+        }
+      } else if (open) {
+        graphics.fillRect(OX + door.a.x * CELL + 2, lineY - 4, 13, 8)
+        graphics.fillRect(OX + door.a.x * CELL + CELL - 17, lineY - 4, 13, 8)
+      } else {
+        graphics.fillRect(OX + door.a.x * CELL + 2, lineY - 4, CELL - 6, 8)
       }
     }
     for (const point of legalMoves(state)) graphics.fillStyle(0x55d9d0, .24).fillRect(OX + point.x * CELL + 4, OY + point.y * CELL + 4, CELL - 10, CELL - 10)
