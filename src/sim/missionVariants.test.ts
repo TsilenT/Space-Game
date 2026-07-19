@@ -6,6 +6,7 @@ import {
   DISTRESS_TRAP_MISSION,
   PIRATE_RESCUE_MISSION,
   TACTICAL_MISSIONS,
+  doorKey,
   isWalkable,
   key,
   type TacticalMission,
@@ -55,8 +56,10 @@ describe('authored tactical mission definitions', () => {
     }
   })
 
-  it('keeps every walkable tile connected to the deployment area', () => {
+  it('keeps every walkable tile connected to the deployment area through doors', () => {
     for (const mission of TACTICAL_MISSIONS) {
+      // Walls block; doors count as passable since they open on approach.
+      const walls = new Set(mission.map.walls.map(wall => doorKey(wall.a, wall.b)))
       const queue = [mission.crewSpawns[0]]
       const reached = new Set([key(mission.crewSpawns[0])])
       while (queue.length > 0) {
@@ -68,7 +71,7 @@ describe('authored tactical mission definitions', () => {
           { x: point.x, y: point.y - 1 },
         ]) {
           const neighborKey = key(neighbor)
-          if (reached.has(neighborKey) || !isWalkable(mission.map, neighbor)) continue
+          if (reached.has(neighborKey) || !isWalkable(mission.map, neighbor) || walls.has(doorKey(point, neighbor))) continue
           reached.add(neighborKey)
           queue.push(neighbor)
         }
@@ -77,9 +80,33 @@ describe('authored tactical mission definitions', () => {
     }
   })
 
+  it('seals every room boundary and the hull with wall edges, except at doors', () => {
+    for (const mission of TACTICAL_MISSIONS) {
+      const walls = new Map(mission.map.walls.map(wall => [doorKey(wall.a, wall.b), wall]))
+      const doors = new Set(mission.map.doors.map(door => doorKey(door.a, door.b)))
+      expect(mission.map.walls.some(wall => wall.hull)).toBe(true)
+      expect(mission.map.walls.some(wall => !wall.hull)).toBe(true)
+      for (const edge of doors) expect(walls.has(edge)).toBe(false)
+      for (const cell of mission.map.cells) {
+        if (cell.void) continue
+        for (const [dx, dy] of [[1, 0], [0, 1]] as const) {
+          const partner = { x: cell.x + dx, y: cell.y + dy }
+          const neighbor = mission.map.cells.find(candidate => candidate.x === partner.x && candidate.y === partner.y)
+          if (!neighbor) continue
+          const edge = doorKey(cell, partner)
+          if (neighbor.void) {
+            expect(walls.get(edge)?.hull).toBe(true)
+          } else if (cell.room !== neighbor.room) {
+            expect(walls.has(edge) || doors.has(edge)).toBe(true)
+          }
+        }
+      }
+    }
+  })
+
   it('defines every door as an edge between two walkable cells, never occupying a cell', () => {
     const doorCounts = TACTICAL_MISSIONS.map(mission => mission.map.doors.length)
-    expect(doorCounts).toEqual([2, 2, 1, 2])
+    expect(doorCounts).toEqual([6, 6, 4, 5])
     for (const mission of TACTICAL_MISSIONS) {
       for (const door of mission.map.doors) {
         expect(Math.abs(door.a.x - door.b.x) + Math.abs(door.a.y - door.b.y)).toBe(1)

@@ -29,7 +29,7 @@ import {
   type SystemKind,
 } from './sim/campaign'
 import { revealedSystemIds, systemById, type StarSystem } from './sim/galaxy'
-import { FIRE_MODES, approachAndOpenDoor, attack, attackStructure, canTargetStructure, createGame, currentVisibility, type DoorEdge, doorKey, type FireModeId, type GameState, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type ShotResult } from './sim/game'
+import { FIRE_MODES, approachAndOpenDoor, attack, attackStructure, attackWall, canTargetStructure, canTargetWall, createGame, currentVisibility, type DoorEdge, doorKey, type FireModeId, type GameState, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type ShotResult, type WallEdge } from './sim/game'
 import { cellAt, key } from './sim/map'
 import { TurnController } from './turnController'
 
@@ -185,6 +185,19 @@ class TacticalScene extends Phaser.Scene {
     })
   }
 
+  /** The targetable wall whose edge line sits under this world point, if any. */
+  wallAt(px: number, py: number): WallEdge | undefined {
+    return state.map.walls.find(wall => {
+      const vertical = wall.a.y === wall.b.y
+      const lineX = OX + Math.max(wall.a.x, wall.b.x) * CELL - 1
+      const lineY = OY + Math.max(wall.a.y, wall.b.y) * CELL - 1
+      const onEdge = vertical
+        ? Math.abs(px - lineX) <= 7 && py >= OY + wall.a.y * CELL && py < OY + (wall.a.y + 1) * CELL
+        : Math.abs(py - lineY) <= 7 && px >= OX + wall.a.x * CELL && px < OX + (wall.a.x + 1) * CELL
+      return onEdge && canTargetWall(state, wall, fireMode)
+    })
+  }
+
   /** The closed, explored door whose edge bar sits under this world point, if any. */
   doorAt(px: number, py: number): DoorEdge | undefined {
     return state.map.doors.find(door => {
@@ -212,6 +225,11 @@ class TacticalScene extends Phaser.Scene {
     const clickedDoor = this.doorAt(px, py)
     if (clickedDoor) {
       controller.replace(approachAndOpenDoor(state, clickedDoor))
+      return
+    }
+    const clickedWall = this.wallAt(px, py)
+    if (clickedWall) {
+      controller.replace(attackWall(state, clickedWall, fireMode))
       return
     }
     const x = Math.floor((px - OX) / CELL), y = Math.floor((py - OY) / CELL)
@@ -304,6 +322,34 @@ class TacticalScene extends Phaser.Scene {
       } else if (cell.cover) {
         graphics.fillStyle(0x8a7550, isVisible ? .85 : .4).fillRoundedRect(left + 9, top + 9, CELL - 20, CELL - 20, 4)
         graphics.lineStyle(2, 0x5a4b33, isVisible ? .9 : .45).strokeRoundedRect(left + 9, top + 9, CELL - 20, CELL - 20, 4)
+      }
+    }
+    for (const wall of state.map.walls) {
+      const flanks = [wall.a, wall.b].filter(flank => cellAt(state.map, flank))
+      if (!flanks.some(flank => explored.has(key(flank)))) continue
+      const wallVisible = flanks.some(flank => visible.has(key(flank)))
+      const breached = !wall.hull && (state.wallHp[doorKey(wall.a, wall.b)] ?? 0) <= 0
+      const vertical = wall.a.y === wall.b.y
+      const lineX = OX + Math.max(wall.a.x, wall.b.x) * CELL - 1
+      const lineY = OY + Math.max(wall.a.y, wall.b.y) * CELL - 1
+      graphics.fillStyle(wall.hull ? 0x8fa3b3 : 0x5f7686, wallVisible ? (wall.hull ? .95 : .8) : .4)
+      const thickness = wall.hull ? 6 : 4
+      if (vertical) {
+        const top = OY + wall.a.y * CELL
+        if (breached) {
+          graphics.fillRect(lineX - thickness / 2, top - 1, thickness, 10)
+          graphics.fillRect(lineX - thickness / 2, top + CELL - 11, thickness, 10)
+        } else {
+          graphics.fillRect(lineX - thickness / 2, top - 1, thickness, CELL)
+        }
+      } else {
+        const left = OX + wall.a.x * CELL
+        if (breached) {
+          graphics.fillRect(left - 1, lineY - thickness / 2, 10, thickness)
+          graphics.fillRect(left + CELL - 11, lineY - thickness / 2, 10, thickness)
+        } else {
+          graphics.fillRect(left - 1, lineY - thickness / 2, CELL, thickness)
+        }
       }
     }
     for (const door of state.map.doors) {

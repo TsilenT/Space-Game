@@ -17,6 +17,8 @@ export interface Cell extends Point {
   readonly opaque: boolean
   readonly cover?: boolean
   readonly structure?: StructureDefinition
+  /** Space outside the ship's pressurised volume; hull edges seal it off. */
+  readonly void?: boolean
 }
 
 /**
@@ -40,6 +42,18 @@ export function doorKey(a: Point, b: Point): DoorKey {
   return `${first.x},${first.y}|${second.x},${second.y}`
 }
 
+/**
+ * A wall occupies the edge between two adjacent cells, like a door. Hull
+ * walls seal the ship against the void and can never be destroyed; interior
+ * bulkheads separate rooms and can be breached by weapons that beat their
+ * armour. `a` is always on the inside of a hull wall.
+ */
+export interface WallEdge {
+  readonly a: Point
+  readonly b: Point
+  readonly hull: boolean
+}
+
 export interface RoomDefinition {
   readonly name: string
   readonly label: Point
@@ -57,6 +71,7 @@ export interface TacticalMap {
   readonly rooms: readonly RoomDefinition[]
   readonly systems: readonly SystemMarker[]
   readonly doors: readonly DoorEdge[]
+  readonly walls: readonly WallEdge[]
 }
 
 export interface UnitPlacement extends Point {
@@ -100,6 +115,7 @@ interface TileDefinition {
   readonly opaque: boolean
   readonly cover?: boolean
   readonly structure?: StructureDefinition
+  readonly void?: boolean
 }
 
 interface MapDefinition {
@@ -108,6 +124,44 @@ interface MapDefinition {
   readonly rooms?: readonly RoomDefinition[]
   readonly systems?: readonly SystemMarker[]
   readonly doors?: readonly DoorEdge[]
+}
+
+/**
+ * Derive the wall edges from the room layout: a hull wall seals every
+ * boundary between the ship and the void (or the map border), and an
+ * interior bulkhead stands on every boundary between two different rooms
+ * unless a door is declared there. Opaque cells need no edges — they block
+ * by themselves.
+ */
+function deriveWalls(cells: readonly Cell[], width: number, height: number, doors: readonly DoorEdge[]): WallEdge[] {
+  const doorEdges = new Set(doors.map(door => doorKey(door.a, door.b)))
+  const at = (x: number, y: number): Cell | undefined =>
+    x >= 0 && x < width && y >= 0 && y < height ? cells[y * width + x] : undefined
+  const walls: WallEdge[] = []
+
+  for (const cell of cells) {
+    if (cell.opaque) continue
+    for (const [dx, dy] of [[1, 0], [0, 1]] as const) {
+      const partner = { x: cell.x + dx, y: cell.y + dy }
+      const neighbor = at(partner.x, partner.y)
+      if (!neighbor || neighbor.opaque || doorEdges.has(doorKey(cell, partner))) continue
+      const cellVoid = cell.void === true
+      const neighborVoid = neighbor.void === true
+      if (cellVoid && neighborVoid) continue
+      if (cellVoid !== neighborVoid) {
+        walls.push({ a: cellVoid ? partner : { x: cell.x, y: cell.y }, b: cellVoid ? { x: cell.x, y: cell.y } : partner, hull: true })
+      } else if (cell.room !== neighbor.room) {
+        walls.push({ a: { x: cell.x, y: cell.y }, b: partner, hull: false })
+      }
+    }
+    if (cell.void) continue
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const outside = { x: cell.x + dx, y: cell.y + dy }
+      if (at(outside.x, outside.y)) continue
+      walls.push({ a: { x: cell.x, y: cell.y }, b: outside, hull: true })
+    }
+  }
+  return walls
 }
 
 export function defineTacticalMap(definition: MapDefinition): TacticalMap {
@@ -137,6 +191,7 @@ export function defineTacticalMap(definition: MapDefinition): TacticalMap {
     rooms: definition.rooms ?? [],
     systems: definition.systems ?? [],
     doors,
+    walls: deriveWalls(cells, width, height, doors),
   }
 }
 
@@ -152,7 +207,8 @@ export const isOpaque = (map: TacticalMap, point: Point): boolean => cellAt(map,
 export const roomAt = (map: TacticalMap, point: Point): string => cellAt(map, point)?.room ?? 'Unknown'
 
 const floor = (room: string): TileDefinition => ({ room, walkable: true, opaque: false })
-const wall: TileDefinition = { room: 'Hull', walkable: false, opaque: true }
+/** Space outside the pressurised hull. Sight and fire stop at the hull edges around it. */
+const space: TileDefinition = { room: 'Void', walkable: false, opaque: false, void: true }
 
 /**
  * Destructible furniture: blocks movement and grants cover until its hit
@@ -223,7 +279,7 @@ export const BOARDING_MISSION: TacticalMission = {
       '###AAAAAAAAA###RRRRRR###WWWWWWWWW###',
     ],
     legend: {
-      '#': wall,
+      '#': space,
       A: floor('Boarding Bay'),
       M: floor('Medbay'),
       R: floor('Reactor'),
@@ -237,6 +293,10 @@ export const BOARDING_MISSION: TacticalMission = {
     doors: [
       { a: { x: 12, y: 4 }, b: { x: 13, y: 4 }, room: 'Medbay' },
       { a: { x: 24, y: 16 }, b: { x: 25, y: 16 }, room: 'Weapons' },
+      { a: { x: 11, y: 16 }, b: { x: 12, y: 16 }, room: 'Reactor' },
+      { a: { x: 16, y: 11 }, b: { x: 16, y: 12 }, room: 'Reactor' },
+      { a: { x: 23, y: 7 }, b: { x: 24, y: 7 }, room: 'Bridge' },
+      { a: { x: 25, y: 11 }, b: { x: 25, y: 12 }, room: 'Weapons' },
     ],
     rooms: [
       { name: 'Boarding Bay', label: { x: 4, y: 22 } },
@@ -308,7 +368,7 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
       '###DDDDDDDDD###EEEEEE###BBBBBBBBB###',
     ],
     legend: {
-      '#': wall,
+      '#': space,
       D: floor('Dock'),
       C: floor('Commons'),
       B: floor('Bridge'),
@@ -319,6 +379,9 @@ export const CIVILIAN_RESCUE_MISSION: TacticalMission = {
     },
     doors: [
       { a: { x: 12, y: 7 }, b: { x: 13, y: 7 }, room: 'Commons' },
+      { a: { x: 11, y: 16 }, b: { x: 12, y: 16 }, room: 'Engineering' },
+      { a: { x: 20, y: 4 }, b: { x: 21, y: 4 }, room: 'Bridge' },
+      { a: { x: 23, y: 16 }, b: { x: 24, y: 16 }, room: 'Bridge' },
     ],
     rooms: [
       { name: 'Dock', label: { x: 4, y: 22 } },
@@ -395,7 +458,7 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
       '######AAA######CCCCCC######BBB######',
     ],
     legend: {
-      '#': wall,
+      '#': space,
       A: floor('Airlock'),
       X: floor('Crossway'),
       B: floor('Cargo Hold'),
@@ -406,6 +469,9 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
     doors: [
       { a: { x: 15, y: 7 }, b: { x: 16, y: 7 }, room: 'Crossway' },
       { a: { x: 21, y: 7 }, b: { x: 22, y: 7 }, room: 'Cargo Hold' },
+      { a: { x: 11, y: 16 }, b: { x: 12, y: 16 }, room: 'Reactor Deck' },
+      { a: { x: 17, y: 11 }, b: { x: 17, y: 12 }, room: 'Reactor Deck' },
+      { a: { x: 26, y: 16 }, b: { x: 27, y: 16 }, room: 'Cargo Hold' },
     ],
     rooms: [
       { name: 'Airlock', label: { x: 7, y: 22 } },
