@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { attack, createGame, currentVisibility, enemyTurn, legalTargets, move, selectUnit } from './game'
-import { BOARDING_MISSION, MAP_SCALE, defineTacticalMap, doorKey, key, type TacticalMission } from './map'
+import { BOARDING_MISSION, defineTacticalMap, doorKey, key, type TacticalMission } from './map'
 import { hasLineOfSight, visibleCells } from './visibility'
 
 const legend = {
@@ -37,10 +37,10 @@ describe('deterministic line of sight', () => {
     expect(hasLineOfSight(clearMap, { x: 0, y: 0 }, { x: 2, y: 4 })).toBe(true)
   })
 
-  it('is symmetric for every authored-block-centre pair on the boarding map', () => {
-    // The scaled map has too many cells for a full pairwise sweep, so check the
-    // centre of every authored 3x3 block — one probe per original cell pair.
-    const centres = BOARDING_MISSION.map.cells.filter(cell => cell.x % MAP_SCALE === 1 && cell.y % MAP_SCALE === 1)
+  it('is symmetric for a spread of cell pairs across the boarding map', () => {
+    // The full map has too many cells for a pairwise sweep, so sample every
+    // third cell in both axes.
+    const centres = BOARDING_MISSION.map.cells.filter(cell => cell.x % 3 === 1 && cell.y % 3 === 1)
     for (const from of centres) {
       for (const to of centres) {
         expect(hasLineOfSight(BOARDING_MISSION.map, from, to)).toBe(hasLineOfSight(BOARDING_MISSION.map, to, from))

@@ -4,7 +4,6 @@ import {
   BOARDING_MISSION,
   CIVILIAN_RESCUE_MISSION,
   DISTRESS_TRAP_MISSION,
-  MAP_SCALE,
   PIRATE_RESCUE_MISSION,
   TACTICAL_MISSIONS,
   isWalkable,
@@ -17,7 +16,7 @@ function withoutEnemies(mission: TacticalMission): TacticalMission {
 }
 
 describe('authored tactical mission definitions', () => {
-  it('provides four scenarios across three distinct tripled 36x24 maps', () => {
+  it('provides four scenarios across three distinct 36x24 authored maps', () => {
     expect(TACTICAL_MISSIONS).toEqual([
       BOARDING_MISSION,
       PIRATE_RESCUE_MISSION,
@@ -86,8 +85,6 @@ describe('authored tactical mission definitions', () => {
         expect(Math.abs(door.a.x - door.b.x) + Math.abs(door.a.y - door.b.y)).toBe(1)
         expect(isWalkable(mission.map, door.a)).toBe(true)
         expect(isWalkable(mission.map, door.b)).toBe(true)
-        // The threshold behind the door sits at the centre of its authored block.
-        expect({ x: door.b.x % MAP_SCALE, y: door.b.y % MAP_SCALE }).toEqual({ x: 1, y: 1 })
       }
     }
   })
