@@ -827,23 +827,46 @@ body.in-game .console {
   min-width: 0;
 }
 
-/* Ship-board missions: the map takes the whole screen, the sidebar retires. */
+/* Ship-board missions: the map fills all space on the left, with a slim
+   fire-mode and soldier panel on the right. */
 body.in-tactical .play {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(225px, 260px);
   gap: 10px;
   padding: 10px clamp(8px, 1.2vw, 18px) 12px;
 }
 
-body.in-tactical #hud {
-  display: none;
+body.in-tactical .console {
+  max-width: none;
+  margin: 0;
 }
 
-body.in-tactical .console {
-  max-width: min(100%, calc((100vh - 128px) * 16 / 10));
+/* Phaser's resize mode inlines height:100% on the container, which collapses
+   inside an auto-height parent — pin the height against it. */
+body.in-tactical #phaser-game {
+  aspect-ratio: auto;
+  height: calc(100vh - 158px) !important;
+}
+
+body.in-tactical #hud {
+  align-content: start;
+  grid-column: auto;
+  grid-template-columns: 1fr;
+  max-height: calc(100vh - 78px);
+  overflow-y: auto;
 }
 
 body.in-tactical .actions button {
   padding: 12px;
+}
+
+@media (max-width: 900px) {
+  body.in-tactical .play {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.in-tactical #phaser-game {
+    height: min(72vh, calc(100vw * 0.72)) !important;
+  }
 }
 
 body.in-game #hud {

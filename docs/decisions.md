@@ -100,7 +100,7 @@ This choice keeps a four-person prototype readable while creating reusable found
 
 ### Full-screen battle view — July 20, 2026
 
-- Ship-board missions fill the screen: the sidebar HUD hides during tactical play and the camera viewport grew from 800x600 to 1600x1000 world pixels — roughly 28x17 tiles on screen instead of 14x10. The essentials moved onto the canvas: the top banner shows turn, phase, selected soldier with TU and HP, and the current fire mode, with the latest log line beneath it, and legal targets display their hit percentage above the ring.
+- Ship-board missions fill the screen. The battle map expands to use all space left of a slim right-hand panel: the Phaser canvas runs in resize mode, matching the container 1:1 at any window size (a 1440-wide window shows ~19x13 tiles; larger monitors show more). The right panel (~260 px) carries the fire-mode buttons (snap/auto/aimed) and the soldier stats — the selected soldier's detail plus the crew manifest for selection. Hostile details and the log column retired; the on-canvas banner shows turn, phase, selected soldier with TU and HP, and fire mode, with the latest log line beneath it, and legal targets display their hit percentage above the ring.
 - WASD pans the camera (72 px per press, clamped to the map) exactly like dragging; the right mouse button drags the map without ever issuing an order. Arrow keys still move the selected soldier.
 
 ### Edge walls and breachable bulkheads — July 19, 2026
