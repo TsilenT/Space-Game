@@ -34,8 +34,9 @@ import { cellAt, key } from './sim/map'
 import { TurnController } from './turnController'
 
 const CELL = 58, OX = 52, OY = 78
-const VIEW_W = 800, VIEW_H = 600
-const CAM_MARGIN = 96
+const VIEW_W = 1600, VIEW_H = 1000
+const CAM_MARGIN = 120
+const KEY_PAN_STEP = 72
 const STRUCTURE_COLORS: Record<string, number> = {
   'display bank': 0x4fc3cf,
   'storage unit': 0x8a7550,
@@ -129,8 +130,10 @@ class TacticalScene extends Phaser.Scene {
     let dragging = false
     let dragOrigin = { x: 0, y: 0 }
     let scrollOrigin = { x: 0, y: 0 }
+    this.game.canvas.addEventListener('contextmenu', event => event.preventDefault())
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      dragging = false
+      // The right button pans immediately, like grabbing the map.
+      dragging = pointer.button !== 0
       dragOrigin = { x: pointer.x, y: pointer.y }
       scrollOrigin = { x: camera.scrollX, y: camera.scrollY }
     })
@@ -145,7 +148,7 @@ class TacticalScene extends Phaser.Scene {
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
       // Derive world coordinates from the live scroll: pointer.worldX lags the
       // camera matrix, which only refreshes on the next preRender.
-      if (!dragging) this.click(pointer.x + camera.scrollX, pointer.y + camera.scrollY)
+      if (!dragging && pointer.button === 0) this.click(pointer.x + camera.scrollX, pointer.y + camera.scrollY)
       dragging = false
     })
     this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _over: unknown, deltaX: number, deltaY: number) => {
@@ -154,6 +157,14 @@ class TacticalScene extends Phaser.Scene {
       this.scrollTo(camera.scrollX + deltaX, camera.scrollY + deltaY)
     })
     renderApp()
+  }
+
+  /** Pan the camera by a screen-space step, suspending auto-follow like a drag. */
+  panBy(dx: number, dy: number) {
+    this.userPanned = true
+    this.stopPan()
+    const camera = this.cameras.main
+    this.scrollTo(camera.scrollX + dx, camera.scrollY + dy)
   }
 
   /** Set the scroll clamped to bounds; direct setScroll is unclamped until the next preRender. */
@@ -391,7 +402,10 @@ class TacticalScene extends Phaser.Scene {
     for (const unit of state.units.filter(unit => (unit.hp > 0 || dyingIds.has(unit.id)) && (unit.team === 'crew' || visible.has(key(unit))))) {
       const cx = OX + unit.x * CELL + 28, cy = OY + unit.y * CELL + 28
       if (unit.id === state.selectedId) graphics.lineStyle(3, 0xffffff, 1).strokeCircle(cx, cy, 22)
-      if (legalTargetIds.has(unit.id)) graphics.lineStyle(3, 0xf1bd5b, 1).strokeCircle(cx, cy, 22)
+      if (legalTargetIds.has(unit.id)) {
+        graphics.lineStyle(3, 0xf1bd5b, 1).strokeCircle(cx, cy, 22)
+        if (selected) this.add.text(cx, cy - 34, `${hitChance(state, selected, unit, fireMode)}%`, { fontFamily: 'monospace', fontSize: '13px', fontStyle: 'bold', color: '#f1bd5b' }).setOrigin(.5)
+      }
       graphics.fillStyle(unit.team === 'crew' ? 0x5de0d2 : 0xff5c68, 1).fillCircle(cx, cy, 17)
       this.add.text(cx, cy, unit.name[0], { fontFamily: 'monospace', fontSize: '17px', fontStyle: 'bold', color: '#061019' }).setOrigin(.5)
       graphics.fillStyle(0x04070b, 1).fillRect(cx - 21, cy + 20, 42, 5)
@@ -403,11 +417,15 @@ class TacticalScene extends Phaser.Scene {
       this.add.text(OX + room.label.x * CELL, OY + room.label.y * CELL + (room.label.y ? 35 : 8), room.name.toUpperCase(), { fontFamily: 'monospace', fontSize: '11px', color: roomVisible ? '#91a9b8' : '#425866' })
     })
     const deadline = state.objective.kind === 'rescue' ? ` / ${String(state.objective.deadlineTurn).padStart(2, '0')}` : ''
-    this.add.text(52, 28, `TURN ${String(state.turn).padStart(2, '0')}${deadline}  //  ${state.phase.toUpperCase()} PHASE`, { fontFamily: 'monospace', fontSize: '18px', color: state.phase === 'player' ? '#63e3d6' : '#ff6670' }).setScrollFactor(0)
+    const banner = selected
+      ? `TURN ${String(state.turn).padStart(2, '0')}${deadline}  //  ${state.phase.toUpperCase()} PHASE  //  ${selected.name.toUpperCase()} · ${selected.ap} TU · ${selected.hp}/${selected.maxHp} HP  //  ${FIRE_MODES[fireMode].label.toUpperCase()}`
+      : `TURN ${String(state.turn).padStart(2, '0')}${deadline}  //  ${state.phase.toUpperCase()} PHASE`
+    this.add.text(52, 26, banner, { fontFamily: 'monospace', fontSize: '20px', color: state.phase === 'player' ? '#63e3d6' : '#ff6670' }).setScrollFactor(0)
+    this.add.text(52, 52, state.log[0] ?? '', { fontFamily: 'monospace', fontSize: '14px', color: '#91a9b8' }).setScrollFactor(0)
     if (state.status !== 'playing' && pendingShots.length === 0) {
       this.add.graphics().setScrollFactor(0).fillStyle(0x02060b, .86).fillRect(0, 0, VIEW_W, VIEW_H)
-      this.add.text(VIEW_W / 2, 260, terminalTitle(state), { fontFamily: 'monospace', fontSize: '32px', fontStyle: 'bold', color: state.status === 'victory' ? '#63e3d6' : '#ff6670' }).setOrigin(.5).setScrollFactor(0)
-      this.add.text(VIEW_W / 2, 305, terminalSubtitle(state), { fontFamily: 'monospace', fontSize: '15px', color: '#c7d6df' }).setOrigin(.5).setScrollFactor(0)
+      this.add.text(VIEW_W / 2, VIEW_H / 2 - 50, terminalTitle(state), { fontFamily: 'monospace', fontSize: '40px', fontStyle: 'bold', color: state.status === 'victory' ? '#63e3d6' : '#ff6670' }).setOrigin(.5).setScrollFactor(0)
+      this.add.text(VIEW_W / 2, VIEW_H / 2 + 4, terminalSubtitle(state), { fontFamily: 'monospace', fontSize: '17px', color: '#c7d6df' }).setOrigin(.5).setScrollFactor(0)
     }
     updateTacticalHud(state)
 
@@ -783,6 +801,7 @@ function updateTacticalHud(current: GameState) {
 
 function renderApp() {
   const tactical = campaign.phase === 'mission'
+  document.body.classList.toggle('in-tactical', tactical && document.body.classList.contains('in-game'))
   tacticalContainer.hidden = !tactical
   tacticalContainer.setAttribute('aria-hidden', String(!tactical))
   actionBar.hidden = !tactical
@@ -907,7 +926,13 @@ document.addEventListener('keydown', event => {
     return
   }
 
-  const directions: Record<string, [number, number]> = { arrowup: [0, -1], w: [0, -1], arrowdown: [0, 1], s: [0, 1], arrowleft: [-1, 0], a: [-1, 0], arrowright: [1, 0], d: [1, 0] }
+  const panning: Record<string, [number, number]> = { w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] }
+  const directions: Record<string, [number, number]> = { arrowup: [0, -1], arrowdown: [0, 1], arrowleft: [-1, 0], arrowright: [1, 0] }
+  if (panning[pressed]) {
+    if (sceneReady) scene.panBy(panning[pressed][0] * KEY_PAN_STEP, panning[pressed][1] * KEY_PAN_STEP)
+    event.preventDefault()
+    return
+  }
   if (pressed === 'q' || pressed === 'e') {
     const crew = state.units.filter(unit => unit.team === 'crew' && unit.hp > 0)
     const index = crew.findIndex(unit => unit.id === state.selectedId)
