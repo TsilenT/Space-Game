@@ -822,9 +822,28 @@ body.in-game #game-bar {
 
 body.in-game .console {
   width: 100%;
-  max-width: min(100%, calc((100vh - 170px) * 4 / 3));
+  max-width: min(100%, calc((100vh - 170px) * 16 / 10));
   margin: 0 auto;
   min-width: 0;
+}
+
+/* Ship-board missions: the map takes the whole screen, the sidebar retires. */
+body.in-tactical .play {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px clamp(8px, 1.2vw, 18px) 12px;
+}
+
+body.in-tactical #hud {
+  display: none;
+}
+
+body.in-tactical .console {
+  max-width: min(100%, calc((100vh - 128px) * 16 / 10));
+}
+
+body.in-tactical .actions button {
+  padding: 12px;
 }
 
 body.in-game #hud {

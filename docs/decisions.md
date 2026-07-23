@@ -98,6 +98,11 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Turn banner and mission-end overlays are fixed to the screen, not the world. Scroll is always clamped to the map bounds.
 - Deferred: camera zoom, edge-of-screen mouse scrolling, and a minimap.
 
+### Full-screen battle view — July 20, 2026
+
+- Ship-board missions fill the screen: the sidebar HUD hides during tactical play and the camera viewport grew from 800x600 to 1600x1000 world pixels — roughly 28x17 tiles on screen instead of 14x10. The essentials moved onto the canvas: the top banner shows turn, phase, selected soldier with TU and HP, and the current fire mode, with the latest log line beneath it, and legal targets display their hit percentage above the ring.
+- WASD pans the camera (72 px per press, clamped to the map) exactly like dragging; the right mouse button drags the map without ever issuing an order. Arrow keys still move the selected soldier.
+
 ### Edge walls and breachable bulkheads — July 19, 2026
 
 - Walls live on cell edges like doors. The `#` map symbol now means the void outside the ship; wall edges are derived from the room layout: an indestructible **hull** seals every boundary between ship and void (and the map border), and an armoured **bulkhead** stands on every boundary between two different rooms unless a door is declared there. Rooms that previously met at open archways gained doors so every space stays reachable.
