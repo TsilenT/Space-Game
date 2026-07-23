@@ -423,9 +423,9 @@ class TacticalScene extends Phaser.Scene {
     this.add.text(52, 26, banner, { fontFamily: 'monospace', fontSize: '20px', color: state.phase === 'player' ? '#63e3d6' : '#ff6670' }).setScrollFactor(0)
     this.add.text(52, 52, state.log[0] ?? '', { fontFamily: 'monospace', fontSize: '14px', color: '#91a9b8' }).setScrollFactor(0)
     if (state.status !== 'playing' && pendingShots.length === 0) {
-      this.add.graphics().setScrollFactor(0).fillStyle(0x02060b, .86).fillRect(0, 0, VIEW_W, VIEW_H)
-      this.add.text(VIEW_W / 2, VIEW_H / 2 - 50, terminalTitle(state), { fontFamily: 'monospace', fontSize: '40px', fontStyle: 'bold', color: state.status === 'victory' ? '#63e3d6' : '#ff6670' }).setOrigin(.5).setScrollFactor(0)
-      this.add.text(VIEW_W / 2, VIEW_H / 2 + 4, terminalSubtitle(state), { fontFamily: 'monospace', fontSize: '17px', color: '#c7d6df' }).setOrigin(.5).setScrollFactor(0)
+      this.add.graphics().setScrollFactor(0).fillStyle(0x02060b, .86).fillRect(0, 0, camera.width, camera.height)
+      this.add.text(camera.width / 2, camera.height / 2 - 50, terminalTitle(state), { fontFamily: 'monospace', fontSize: '40px', fontStyle: 'bold', color: state.status === 'victory' ? '#63e3d6' : '#ff6670' }).setOrigin(.5).setScrollFactor(0)
+      this.add.text(camera.width / 2, camera.height / 2 + 4, terminalSubtitle(state), { fontFamily: 'monospace', fontSize: '17px', color: '#c7d6df' }).setOrigin(.5).setScrollFactor(0)
     }
     updateTacticalHud(state)
 
@@ -501,7 +501,7 @@ controller = new TurnController(state, next => {
   state = next
   renderApp()
 })
-new Phaser.Game({ type: Phaser.AUTO, parent: 'phaser-game', width: VIEW_W, height: VIEW_H, backgroundColor: '#07101c', scene, scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH } })
+new Phaser.Game({ type: Phaser.AUTO, parent: 'phaser-game', width: VIEW_W, height: VIEW_H, backgroundColor: '#07101c', scene, scale: { mode: Phaser.Scale.RESIZE } })
 // Debug handle so automated verification tooling can inspect the live scene.
 ;(window as unknown as Record<string, unknown>).__tactical = { scene, gameState: () => state, campaignState: () => campaign }
 
@@ -761,19 +761,6 @@ function renderCampaignHud() {
 
 function updateTacticalHud(current: GameState) {
   const selected = current.units.find(unit => unit.id === current.selectedId)
-  const visible = new Set(currentVisibility(current).map(key))
-  const legalTargetIds = new Set(legalTargets(current, fireMode).map(unit => unit.id))
-  const knownHostiles = current.units.filter(unit => unit.team === 'enemy' && (unit.hp <= 0 || visible.has(key(unit))))
-  const hostileMarkup = knownHostiles.length > 0
-    ? knownHostiles.map(unit => {
-      const status = unit.hp <= 0
-        ? 'NEUTRALIZED'
-        : legalTargetIds.has(unit.id) && selected
-          ? `${unit.hp}/${unit.maxHp} · ${hitChance(current, selected, unit, fireMode)}% TO HIT`
-          : `${unit.hp}/${unit.maxHp} · NO SHOT`
-      return `<p class="hostile"><span>${unit.name}</span><b>${status}</b></p>`
-    }).join('')
-    : '<p class="no-contact">No contacts in visual range.</p>'
   const modeMarkup = (['snap', 'auto', 'aimed'] as const).map((id, index) => {
     const mode = FIRE_MODES[id]
     const affordable = (selected?.ap ?? 0) >= mode.cost
@@ -784,10 +771,7 @@ function updateTacticalHud(current: GameState) {
     const hp = unit?.hp ?? 0
     return `<button class="unit ${hp <= 0 ? 'dead' : ''}" data-unit="${record.id}" ${hp <= 0 ? 'disabled' : ''}><span>${record.name}<small>${record.role} · ${record.accuracy} ACC</small></span><b>${hp > 0 ? `${hp}/${record.maxHp} HP · ${unit!.ap} TU` : 'KIA'}</b></button>`
   }).join('')
-  const deadline = current.objective.kind === 'rescue'
-    ? `<section><h3>Deadline</h3><p class="deadline"><strong>TURN ${current.turn}/${current.objective.deadlineTurn}</strong><br>Reach ${current.objective.targetName} before enemy phase ${current.objective.deadlineTurn} ends.</p><p class="rescue-marker-legend">Survivor beacon</p></section>`
-    : ''
-  hud.innerHTML = `<div><p class="kicker">MISSION // ${current.status.toUpperCase()}</p><h2>${current.status === 'playing' ? current.objective.label : terminalTitle(current)}</h2><p>Jump ${campaign.jump} · Hull ${campaign.hull}/${campaign.maxHull} · ${campaign.weaponDamage} weapon damage</p></div>${deadline}<section><h3>Selected</h3><p>${selected ? `<strong>${selected.name}</strong><br>${selected.role} · ${selected.ap} TU · ${selected.hp}/${selected.maxHp} HP · ${selected.accuracy} ACC` : 'Enemy activity…'}</p><div class="fire-modes">${modeMarkup}</div></section><section><h3>Crew manifest</h3>${crewMarkup}</section><section><h3>Hostiles</h3>${hostileMarkup}</section><ol class="log">${current.log.map(entry => `<li>${entry}</li>`).join('')}</ol>`
+  hud.innerHTML = `<section><h3>Selected</h3><p>${selected ? `<strong>${selected.name}</strong><br>${selected.role} · ${selected.ap} TU · ${selected.hp}/${selected.maxHp} HP · ${selected.accuracy} ACC` : 'Enemy activity…'}</p><div class="fire-modes">${modeMarkup}</div></section><section><h3>Crew manifest</h3>${crewMarkup}</section>`
   hud.querySelectorAll<HTMLButtonElement>('[data-unit]').forEach(button => button.onclick = () => {
     button.blur()
     controller.replace(selectUnit(state, button.dataset.unit!))
@@ -810,6 +794,14 @@ function renderApp() {
   if (tactical) {
     if (sceneReady) {
       scene.scale.refresh()
+      // The resize can lag the layout change by a tick; settle it shortly after.
+      if (Math.round(scene.scale.height) !== Math.round(tacticalContainer.clientHeight) || Math.round(scene.scale.width) !== Math.round(tacticalContainer.clientWidth)) {
+        window.setTimeout(() => {
+          if (campaign.phase !== 'mission' || !sceneReady) return
+          scene.scale.refresh()
+          if (!animating) scene.draw()
+        }, 40)
+      }
       scene.draw()
     }
     configureTacticalActions()
