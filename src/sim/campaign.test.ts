@@ -19,12 +19,13 @@ import {
   type CampaignState,
   type DestinationKind,
   type DistressEncounter,
+  type MoonEncounter,
   type MoonOutcome,
   type StarbaseEncounter,
 } from './campaign'
 import { jumpTargets, systemById } from './galaxy'
 import { createGame, type GameState, type MissionResolution } from './game'
-import { BOARDING_MISSION, CIVILIAN_RESCUE_MISSION, DISTRESS_TRAP_MISSION, PIRATE_RESCUE_MISSION } from './map'
+import { BOARDING_MISSION, CIVILIAN_RESCUE_MISSION, DISTRESS_TRAP_MISSION, MOON_BASE_MISSION, PIRATE_RESCUE_MISSION } from './map'
 
 // Encounters roll off a system's eventSeed, fixed at galaxy generation. To pin
 // outcomes without hunting whole galaxies, arrive() rides a crafted offer on
@@ -143,9 +144,10 @@ describe('galaxy navigation', () => {
 describe('abandoned moon and direct distress outcomes', () => {
   const moonSeeds: Readonly<Record<MoonOutcome, number>> = {
     salvage: 1,
-    survivor: 1069,
-    amoeba: 1507,
-    fuel: 1843,
+    survivor: 682,
+    base: 1094,
+    amoeba: 1456,
+    fuel: 1791,
   }
 
   it('reaches every weighted moon outcome from stable seeds', () => {
@@ -216,6 +218,29 @@ describe('abandoned moon and direct distress outcomes', () => {
     const lost = resolveEncounter(arrived)
     expect(lost).toMatchObject({ phase: 'lost', hull: 0 })
     expect(lost.encounter).toMatchObject({ outcome: 'amoeba', resolved: true })
+  })
+
+  it('lets the player send a landing party down to a discovered moon base', () => {
+    const arrived = arrive(moonSeeds.base, 'abandoned-moon')
+    expect(encounter<MoonEncounter>(arrived, 'abandoned-moon').outcome).toBe('base')
+    // The base is a boarding decision, not a survey roll.
+    expect(resolveEncounter(arrived)).toBe(arrived)
+
+    const mission = beginMission(arrived)
+    expect(mission).toMatchObject({ phase: 'mission', activeMission: { kind: 'moon-base', templateId: MOON_BASE_MISSION.id } })
+    const tactical = missionFor(mission)
+    expect(tactical.id).toBe(MOON_BASE_MISSION.id)
+    expect(tactical.units.filter(unit => unit.team === 'enemy')).toHaveLength(7)
+
+    const debrief = resolveMission(mission, completedMission(mission, 'victory'))
+    expect(debrief.phase).toBe('debrief')
+    expect(debrief.missionReport).toMatchObject({
+      outcome: 'victory',
+      objective: MOON_BASE_MISSION.objective.label,
+      salvageGained: 4,
+      creditsGained: 3,
+      hullDamage: 0,
+    })
   })
 
   it('can take or decline a survivor found at a direct distress call', () => {

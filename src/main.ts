@@ -650,6 +650,9 @@ function renderMoon(encounter: MoonEncounter): string {
     const result = moonResult(encounter)
     return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">${result.kicker}</p><h2 id="campaign-heading" tabindex="-1">${result.heading}</h2><p class="campaign-lede">${result.body}</p>${eventDeltas(result.deltas)}${encounter.recruit ? campaignRoster(campaign.crew) : ''}<div class="campaign-actions"><button data-campaign-action="continue-encounter">RETURN TO NAVIGATION</button></div></div>`
   }
+  if (encounter.outcome === 'base') {
+    return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">ARRIVAL // DERELICT MOON BASE</p><h2 id="campaign-heading" tabindex="-1">${encounter.name} is not empty. A base sits dark on the surface.</h2><p class="campaign-lede">Thermal scans light up a buried habitat ring — and movement inside. Whatever nests in those rooms has had the base's stores to itself for a long time.</p><div class="encounter-banner"><p><strong>LANDING PARTY</strong></p><p>Deploy the boarding team to the regolith. The mission ends when every alien is dead.</p></div><div class="campaign-actions"><button data-campaign-action="begin-mission">SEND DOWN A LANDING PARTY</button><button data-campaign-action="decline-encounter">LEAVE IT BURIED</button></div></div>`
+  }
   return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">ARRIVAL // ABANDONED MOON</p><h2 id="campaign-heading" tabindex="-1">${encounter.name} has been silent for eighty years.</h2><p class="campaign-lede">Scans show buried structures and intermittent heat below the dust. Salvage is likely; fuel and survivors are not impossible.</p><div class="encounter-banner"><p><strong>UNCERTAIN SURVEY</strong></p><p>The signal is real. Its source is not yet clear.</p></div><div class="campaign-actions"><button data-campaign-action="resolve-encounter">LAND A SURVEY TEAM</button><button data-campaign-action="decline-encounter">LEAVE IT BURIED</button></div></div>`
 }
 
@@ -691,6 +694,7 @@ function renderEncounter(): string {
 function debriefHeading(): string {
   if (campaign.activeMission?.kind === 'timed-rescue') return 'The survivor is aboard. The ship dies behind you.'
   if (campaign.activeMission?.kind === 'distress-trap') return 'The bait had teeth. You took them.'
+  if (campaign.activeMission?.kind === 'moon-base') return 'The base is quiet. Its stores are yours.'
   return 'The distress ship is safe enough to search.'
 }
 

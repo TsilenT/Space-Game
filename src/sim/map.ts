@@ -495,4 +495,85 @@ export const DISTRESS_TRAP_MISSION: TacticalMission = {
   ],
 }
 
-export const TACTICAL_MISSIONS = [BOARDING_MISSION, PIRATE_RESCUE_MISSION, CIVILIAN_RESCUE_MISSION, DISTRESS_TRAP_MISSION] as const
+const MOON_CREW_SPAWNS = [
+  { x: 1, y: 1 },
+  { x: 2, y: 1 },
+  { x: 1, y: 2 },
+  { x: 2, y: 2 },
+  { x: 3, y: 2 },
+  { x: 2, y: 3 },
+]
+
+export const MOON_BASE_MISSION: TacticalMission = {
+  id: 'moon-base-assault',
+  objective: { kind: 'eliminate', label: 'Clear the moon base of alien infestation' },
+  visionRange: 18,
+  map: defineTacticalMap({
+    rows: [
+      '....................................',
+      '....................................',
+      '..............qq.............q......',
+      '.....rr.............................',
+      '.................rr......rr.........',
+      '....................................',
+      '....................................',
+      '...........HHHHHHHLLLLLLL......q....',
+      '...r.......HHHHHHHLLLLccL...........',
+      '...r.......HHHHHHHLLLLLLL...........',
+      '...........HHdHHHHLLLLLLL..r........',
+      '...........HHdHHHHLLLLLLL...........',
+      '.......q...HHHHHHHPPPPPPP...........',
+      '.......q...HHHHHHHPPPPPPP...........',
+      '...........HHHHHHHPPPPPPP...........',
+      '...........HHHHHHHPPggPPP......q....',
+      '.........r.HHHHHHHPPPPPPP...........',
+      '....rr..............................',
+      '....................................',
+      '............................rr......',
+      '...........qq.......................',
+      '...................rr...............',
+      '....................................',
+      '....................................',
+    ],
+    legend: {
+      '.': floor('Regolith'),
+      H: floor('Habitat'),
+      L: floor('Laboratory'),
+      P: floor('Power Cell'),
+      r: structure('Regolith', STRUCTURE_KINDS.storageUnit),
+      q: structure('Regolith', STRUCTURE_KINDS.alienGrowth),
+      d: structure('Habitat', STRUCTURE_KINDS.displayBank),
+      c: structure('Laboratory', STRUCTURE_KINDS.controlConsole),
+      g: structure('Power Cell', STRUCTURE_KINDS.alienGrowth),
+    },
+    doors: [
+      { a: { x: 10, y: 11 }, b: { x: 11, y: 11 }, room: 'Habitat' },
+      { a: { x: 17, y: 9 }, b: { x: 18, y: 9 }, room: 'Laboratory' },
+      { a: { x: 17, y: 14 }, b: { x: 18, y: 14 }, room: 'Power Cell' },
+      { a: { x: 21, y: 11 }, b: { x: 21, y: 12 }, room: 'Power Cell' },
+    ],
+    rooms: [
+      { name: 'Habitat', label: { x: 12, y: 7 } },
+      { name: 'Laboratory', label: { x: 19, y: 7 } },
+      { name: 'Power Cell', label: { x: 19, y: 16 } },
+    ],
+    systems: [
+      { x: 15, y: 8, room: 'Habitat', system: 'HAB' },
+      { x: 21, y: 8, room: 'Laboratory', system: 'LAB' },
+      { x: 23, y: 15, room: 'Power Cell', system: 'PWR' },
+    ],
+  }),
+  crewSpawns: MOON_CREW_SPAWNS,
+  units: [
+    ...crewAt(MOON_CREW_SPAWNS),
+    { id: 'crawler-1', name: 'Chitin Scuttler', role: 'Moon crawler', team: 'enemy', x: 17, y: 5, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'crawler-2', name: 'Chitin Stalker', role: 'Moon crawler', team: 'enemy', x: 28, y: 12, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'crawler-3', name: 'Chitin Lurker', role: 'Moon crawler', team: 'enemy', x: 14, y: 19, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'crawler-4', name: 'Brood Warden', role: 'Hive guard', team: 'enemy', x: 14, y: 9, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'crawler-5', name: 'Brood Sentry', role: 'Hive guard', team: 'enemy', x: 12, y: 14, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'crawler-6', name: 'Lab Horror', role: 'Hive guard', team: 'enemy', x: 21, y: 9, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'crawler-7', name: 'Brood Alpha', role: 'Hive alpha', team: 'enemy', x: 22, y: 14, hp: 9, ap: BASE_TIME_UNITS, accuracy: 55 },
+  ],
+}
+
+export const TACTICAL_MISSIONS = [BOARDING_MISSION, PIRATE_RESCUE_MISSION, CIVILIAN_RESCUE_MISSION, DISTRESS_TRAP_MISSION, MOON_BASE_MISSION] as const

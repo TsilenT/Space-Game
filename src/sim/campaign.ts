@@ -10,6 +10,7 @@ import {
   BOARDING_MISSION,
   CIVILIAN_RESCUE_MISSION,
   DISTRESS_TRAP_MISSION,
+  MOON_BASE_MISSION,
   PIRATE_RESCUE_MISSION,
   type TacticalMission,
 } from './map'
@@ -19,9 +20,9 @@ export type DestinationKind = Exclude<SystemKind, 'core'>
 export type { Galaxy, StarSystem, SystemKind } from './galaxy'
 export type RecoveryChoice = 'crew' | 'hull' | 'bank'
 export type CrewMissionStatus = 'ready' | 'wounded' | 'killed'
-export type MoonOutcome = 'salvage' | 'survivor' | 'fuel' | 'amoeba'
+export type MoonOutcome = 'salvage' | 'survivor' | 'fuel' | 'amoeba' | 'base'
 export type DistressOutcome = 'survivor' | 'pirates' | 'rescue' | 'trap'
-export type MissionKind = 'pirate-rescue' | 'timed-rescue' | 'distress-trap'
+export type MissionKind = 'pirate-rescue' | 'timed-rescue' | 'distress-trap' | 'moon-base'
 
 export interface CampaignCrew {
   readonly id: string
@@ -237,13 +238,15 @@ function starbaseEncounter(offer: DestinationOffer): StarbaseEncounter {
 
 function moonEncounter(offer: DestinationOffer): MoonEncounter {
   const roll = unitRoll(offer.eventSeed)
-  const outcome: MoonOutcome = roll < 0.65
+  const outcome: MoonOutcome = roll < 0.5
     ? 'salvage'
-    : roll < 0.82
+    : roll < 0.66
       ? 'survivor'
-      : roll < 0.95
-        ? 'amoeba'
-        : 'fuel'
+      : roll < 0.8
+        ? 'base'
+        : roll < 0.93
+          ? 'amoeba'
+          : 'fuel'
   return {
     id: `event-${offer.id}`,
     offerId: offer.id,
@@ -372,6 +375,8 @@ export function resolveEncounter(state: CampaignState): CampaignState {
   const encounter = state.encounter
   if (state.phase !== 'encounter' || !encounter || encounter.resolved || encounter.kind === 'starbase') return state
   if (encounter.kind === 'distress' && encounter.outcome !== 'survivor') return state
+  // A discovered base is a boarding decision, not a survey roll.
+  if (encounter.kind === 'abandoned-moon' && encounter.outcome === 'base') return state
 
   const resolvedEncounter = { ...encounter, resolved: true }
   if (encounter.kind === 'abandoned-moon') {
@@ -464,7 +469,17 @@ export function hireMercenary(state: CampaignState): CampaignState {
   }
 }
 
-function missionContext(encounter: DistressEncounter): MissionContext | undefined {
+function missionContext(encounter: DistressEncounter | MoonEncounter): MissionContext | undefined {
+  if (encounter.kind === 'abandoned-moon') {
+    if (encounter.outcome !== 'base') return undefined
+    return {
+      kind: 'moon-base',
+      templateId: MOON_BASE_MISSION.id,
+      rewards: { salvage: 4, credits: 3, fuel: 0 },
+      successHullDamage: 0,
+      timeoutHullDamage: 0,
+    }
+  }
   if (encounter.outcome === 'pirates') {
     return {
       kind: 'pirate-rescue',
@@ -498,8 +513,9 @@ function missionContext(encounter: DistressEncounter): MissionContext | undefine
 }
 
 export function beginMission(state: CampaignState): CampaignState {
-  if (state.phase !== 'encounter' || state.encounter?.kind !== 'distress' || state.encounter.resolved) return state
-  const activeMission = missionContext(state.encounter)
+  const encounter = state.encounter
+  if (state.phase !== 'encounter' || !encounter || encounter.kind === 'starbase' || encounter.resolved) return state
+  const activeMission = missionContext(encounter)
   if (!activeMission) return state
   return { ...state, phase: 'mission', activeMission, missionReport: undefined }
 }
@@ -507,6 +523,7 @@ export function beginMission(state: CampaignState): CampaignState {
 function templateFor(context: MissionContext): TacticalMission {
   if (context.kind === 'timed-rescue') return CIVILIAN_RESCUE_MISSION
   if (context.kind === 'distress-trap') return DISTRESS_TRAP_MISSION
+  if (context.kind === 'moon-base') return MOON_BASE_MISSION
   return PIRATE_RESCUE_MISSION
 }
 
