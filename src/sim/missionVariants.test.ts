@@ -4,6 +4,7 @@ import {
   BOARDING_MISSION,
   CIVILIAN_RESCUE_MISSION,
   DISTRESS_TRAP_MISSION,
+  MOON_BASE_MISSION,
   PIRATE_RESCUE_MISSION,
   TACTICAL_MISSIONS,
   doorKey,
@@ -17,15 +18,16 @@ function withoutEnemies(mission: TacticalMission): TacticalMission {
 }
 
 describe('authored tactical mission definitions', () => {
-  it('provides four scenarios across three distinct 36x24 authored maps', () => {
+  it('provides five scenarios across four distinct 36x24 authored maps', () => {
     expect(TACTICAL_MISSIONS).toEqual([
       BOARDING_MISSION,
       PIRATE_RESCUE_MISSION,
       CIVILIAN_RESCUE_MISSION,
       DISTRESS_TRAP_MISSION,
+      MOON_BASE_MISSION,
     ])
-    expect(new Set(TACTICAL_MISSIONS.map(mission => mission.id)).size).toBe(4)
-    expect(new Set(TACTICAL_MISSIONS.map(mission => mission.map))).toHaveProperty('size', 3)
+    expect(new Set(TACTICAL_MISSIONS.map(mission => mission.id)).size).toBe(5)
+    expect(new Set(TACTICAL_MISSIONS.map(mission => mission.map))).toHaveProperty('size', 4)
     for (const mission of TACTICAL_MISSIONS) {
       expect(mission.map).toMatchObject({ width: 36, height: 24 })
       expect(mission.crewSpawns).toHaveLength(6)
@@ -106,7 +108,7 @@ describe('authored tactical mission definitions', () => {
 
   it('defines every door as an edge between two walkable cells, never occupying a cell', () => {
     const doorCounts = TACTICAL_MISSIONS.map(mission => mission.map.doors.length)
-    expect(doorCounts).toEqual([6, 6, 4, 5])
+    expect(doorCounts).toEqual([6, 6, 4, 5, 4])
     for (const mission of TACTICAL_MISSIONS) {
       for (const door of mission.map.doors) {
         expect(Math.abs(door.a.x - door.b.x) + Math.abs(door.a.y - door.b.y)).toBe(1)
@@ -120,6 +122,7 @@ describe('authored tactical mission definitions', () => {
     expect(BOARDING_MISSION.objective.kind).toBe('eliminate')
     expect(PIRATE_RESCUE_MISSION.objective.kind).toBe('eliminate')
     expect(DISTRESS_TRAP_MISSION.objective.kind).toBe('eliminate')
+    expect(MOON_BASE_MISSION.objective.kind).toBe('eliminate')
     expect(CIVILIAN_RESCUE_MISSION.objective).toMatchObject({
       kind: 'rescue',
       target: { x: 31, y: 4 },

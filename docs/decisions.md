@@ -98,6 +98,11 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Turn banner and mission-end overlays are fixed to the screen, not the world. Scroll is always clamped to the map bounds.
 - Deferred: camera zoom, edge-of-screen mouse scrolling, and a minimap.
 
+### Moon base assault — July 24, 2026
+
+- Abandoned-moon arrivals can now roll a fifth outcome (weights: salvage 50%, survivor 16%, base 14%, amoeba 13%, fuel 7%): a derelict base with something alive inside. The player chooses to send down a landing party (a tactical mission) or leave it buried; there is no survey roll for a base.
+- The mission plays on a new 36x24 map: a wide-open regolith surface with scattered destructible crates and alien growths for cover, crew deploying in the north-west corner, and a walled base in the middle — Habitat, Laboratory, and Power Cell rooms separated by the standard armoured bulkheads, with one entry door from the surface and three interior doors. Three crawlers prowl the surface and four hive creatures (including a tougher Brood Alpha) hold the rooms. The mission ends when every alien is dead. Victory pays 4 salvage and 3 credits with no hull damage.
+
 ### Full-screen battle view — July 20, 2026
 
 - Ship-board missions fill the screen. The battle map expands to use all space left of a slim right-hand panel: the Phaser canvas runs in resize mode, matching the container 1:1 at any window size (a 1440-wide window shows ~19x13 tiles; larger monitors show more). The right panel (~260 px) carries the fire-mode buttons (snap/auto/aimed) and the soldier stats — the selected soldier's detail plus the crew manifest for selection. Hostile details and the log column retired; the on-canvas banner shows turn, phase, selected soldier with TU and HP, and fire mode, with the latest log line beneath it, and legal targets display their hit percentage above the ring.
