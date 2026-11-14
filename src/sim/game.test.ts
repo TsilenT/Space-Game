@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FIRE_MODES, TURN_TIME_UNITS, WALL_HP, approachAndOpenDoor, attack, attackStructure, attackWall, canTargetStructure, createGame, currentVisibility, enemyTurn, endTurn, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type Unit } from './game'
+import { FIRE_MODES, TURN_TIME_UNITS, WALL_HP, approachAndOpenDoor, attack, attackStructure, attackWall, canSetOverwatch, canTargetStructure, createGame, currentVisibility, enemyTurn, endTurn, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, setOverwatch, type Unit } from './game'
 import { defineTacticalMap, doorKey, key, type TacticalMission } from './map'
 
 // Hunted LCG states: the next roll(s) from these values land where each name says.
@@ -105,9 +105,32 @@ describe('fire modes and accuracy', () => {
     const ada = unit(game, 'ada')
     const wraith = unit(game, 'wraith-1')
     expect(hitChance(game, ada, wraith, 'aimed')).toBe(58)
+    expect(legalTargets(game, 'aimed')).toContain(wraith)
+    expect(unit(attack({ ...game, rngState: RNG_SURE_HIT }, wraith.id, 'aimed'), wraith.id).hp).toBe(9)
     // The same crate does not shield against fire from the opposite side.
     const flanked = { ...game, units: game.units.map(u => u.id === 'ada' ? { ...u, x: 8 } : u) }
     expect(hitChance(flanked, unit(flanked, 'ada'), unit(flanked, 'wraith-1'), 'aimed')).toBe(78)
+  })
+
+  it('blocks a direct shot at distant cover or a living bystander, and opens the lane when cleared', () => {
+    const mission = fireMission()
+    const obscured = createGame({
+      ...mission,
+      seed: RNG_SURE_HIT,
+      map: defineTacticalMap({ rows: ['..........', '.v........', '..........'], legend: rangeLegend }),
+      units: [...mission.units, { ...mission.units[0], id: 'milo', name: 'Milo', x: 2 }],
+    })
+    expect(currentVisibility(obscured)).toContainEqual({ x: 4, y: 1 })
+    const blocked = attack(obscured, 'wraith-1')
+    expect(blocked.lastShots).toHaveLength(0)
+    expect(blocked.rngState).toBe(obscured.rngState)
+    expect(unit(blocked, 'ada').ap).toBe(12)
+    expect(blocked.log[0]).toContain('firing lane to Wraith is blocked')
+    const wreckage = { ...obscured, structureHp: { '1,1': 0 } }
+    expect(legalTargets(wreckage)).toEqual([])
+    const cleared = { ...wreckage, units: wreckage.units.map(unit => unit.id === 'milo' ? { ...unit, hp: 0 } : unit) }
+    expect(legalTargets(cleared)).toContainEqual(unit(cleared, 'wraith-1'))
+    expect(unit(attack(cleared, 'wraith-1'), 'wraith-1').hp).toBe(9)
   })
 
   it('spends the fire mode cost, hits deterministically, and tracks landed hits', () => {
@@ -177,6 +200,77 @@ describe('fire modes and accuracy', () => {
 
     const hit = enemyTurn({ ...staged, rngState: RNG_SURE_HIT })
     expect(unit(hit, 'ada').hp).toBe(6)
+  })
+
+  it('makes enemies reposition around an obstructed fire lane', () => {
+    const mission = fireMission()
+    const game = createGame({
+      ...mission,
+      map: defineTacticalMap({ rows: ['..........', '..o.......', '..........'], legend: rangeLegend }),
+      seed: RNG_SURE_HIT,
+    })
+    const result = enemyTurn(endTurn(game))
+    expect(result.lastShots[0].from).not.toEqual({ x: 4, y: 1 })
+    expect(unit(result, 'ada').hp).toBe(6)
+  })
+})
+
+describe('overwatch reaction fire', () => {
+  it('commits four time units only once and fires before a newly visible enemy can attack', () => {
+    const mission = fireMission()
+    const game = createGame({
+      ...mission,
+      seed: RNG_SURE_HIT,
+      visionRange: 3,
+      units: [mission.units[0], { ...mission.units[1], hp: 3 }],
+    })
+    expect(canSetOverwatch(game)).toBe(true)
+    const armed = setOverwatch(game)
+    expect(unit(armed, 'ada').ap).toBe(8)
+    expect(armed.overwatch).toEqual(['ada'])
+    expect(setOverwatch(armed)).toBe(armed)
+    const result = enemyTurn(endTurn(armed))
+    expect(result.resolution).toEqual({ result: 'victory', reason: 'hostiles-eliminated' })
+    expect(result.lastShots).toEqual([expect.objectContaining({ reaction: true, shooterId: 'ada', hitUnitId: 'wraith-1', killed: true })])
+    expect(unit(result, 'ada')).toMatchObject({ hp: 8, hits: 1 })
+  })
+
+  it('lets a watcher react to an opened door but spends the reaction only once', () => {
+    const mission = fireMission()
+    const game = createGame({
+      ...mission,
+      seed: RNG_SURE_HIT,
+      map: defineTacticalMap({
+        rows: ['..........'], legend: rangeLegend,
+        doors: [{ a: { x: 2, y: 0 }, b: { x: 3, y: 0 }, room: 'Deck' }],
+      }),
+      units: [
+        ...mission.units.map(unit => ({ ...unit, y: 0, hp: unit.team === 'enemy' ? 3 : unit.hp })),
+        { ...mission.units[1], id: 'wraith-2', x: 6, y: 0 },
+      ],
+    })
+    expect(currentVisibility(game)).not.toContainEqual({ x: 3, y: 0 })
+    const result = enemyTurn(endTurn(setOverwatch(game)))
+    expect(result.lastShots).toHaveLength(2)
+    expect(result.lastShots[0]).toMatchObject({ reaction: true, aimAt: { x: 3, y: 0 }, hitUnitId: 'wraith-1' })
+    expect(result.lastShots[1].shooterId).toBe('wraith-2')
+    expect(result.explored).toContain('3,0')
+    expect(currentVisibility(result)).not.toContainEqual({ x: 3, y: 0 })
+    expect(result.overwatch).toEqual([])
+    expect(unit(result, 'ada').ap).toBe(12)
+  })
+
+  it('does not react to out-of-range movement or a stationary attack', () => {
+    const mission = fireMission()
+    const distant = createGame({ ...mission, visionRange: 2, units: [mission.units[0], { ...mission.units[1], x: 8 }] })
+    const unseen = enemyTurn(endTurn(setOverwatch(distant)))
+    expect(unit(unseen, 'wraith-1').x).toBe(5)
+    expect(unseen.lastShots).toEqual([])
+    expect(unseen.overwatch).toEqual([])
+
+    const attacked = enemyTurn(endTurn(setOverwatch(createGame(mission))))
+    expect(attacked.lastShots).toEqual([expect.objectContaining({ shooterId: 'wraith-1' })])
+    expect(setOverwatch({ ...distant, units: distant.units.map(unit => ({ ...unit, ap: 3 })) }).overwatch).toEqual([])
   })
 })
 

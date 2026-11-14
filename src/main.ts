@@ -13,9 +13,11 @@ import {
   continueEncounter,
   createCampaign,
   declineEncounter,
+  destinationFuelCost,
   hireMercenary,
   leaveStarbase,
   missionFor,
+  repairAtStarbase,
   resolveEncounter,
   resolveMission,
   sellSalvage,
@@ -29,8 +31,9 @@ import {
   type SystemKind,
 } from './sim/campaign'
 import { revealedSystemIds, systemById, type StarSystem } from './sim/galaxy'
-import { FIRE_MODES, approachAndOpenDoor, attack, attackStructure, attackWall, canTargetStructure, canTargetWall, createGame, currentVisibility, type DoorEdge, doorKey, type FireModeId, type GameState, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, type ShotResult, type WallEdge } from './sim/game'
+import { FIRE_MODES, approachAndOpenDoor, attack, attackStructure, attackWall, canSetOverwatch, canTargetStructure, canTargetWall, createGame, currentVisibility, type DoorEdge, doorKey, type FireModeId, type GameState, hitChance, isCellWalkable, legalMoves, legalTargets, move, selectUnit, setOverwatch, type ShotResult, type WallEdge } from './sim/game'
 import { cellAt, key } from './sim/map'
+import { medbayHealing, type ShipSystem } from './sim/ship'
 import { TurnController } from './turnController'
 
 const CELL = 58, OX = 52, OY = 78
@@ -56,7 +59,16 @@ const ROOM_COLORS: Record<string, number> = {
   Crossway: 0x302538,
   Cargo: 0x302c27,
   Barracks: 0x192c45,
+  'Shuttle Dock': 0x132b38,
+  'Guard Gallery': 0x362832,
+  'Service Passage': 0x193831,
+  'Beacon Chamber': 0x292344,
 }
+const SHIP_SYSTEMS = {
+  medbay: { label: 'Medbay', effect: 'Restore triage to 2 HP per wounded crew member.' },
+  engines: { label: 'Engines', effect: 'Restore same-ring jumps to 1 fuel.' },
+} satisfies Record<ShipSystem, { label: string; effect: string }>
+const shipSystemIds = ['medbay', 'engines'] as const
 
 const seedText = new URLSearchParams(window.location.search).get('seed')
 const requestedSeed = seedText === null ? undefined : Number(seedText)
@@ -106,6 +118,7 @@ startGameButton.onclick = () => setGameMode(true)
 exitGameButton.onclick = () => setGameMode(false)
 
 function terminalTitle(current: GameState): string {
+  if (current.resolution?.reason === 'extracted') return 'BEACON SILENCED'
   if (current.resolution?.reason === 'survivor-rescued') return 'SURVIVOR SECURED'
   if (current.resolution?.reason === 'deadline-expired') return 'SHIP DETONATED'
   if (current.status === 'victory') return 'SHIP SECURED'
@@ -113,6 +126,7 @@ function terminalTitle(current: GameState): string {
 }
 
 function terminalSubtitle(current: GameState): string {
+  if (current.resolution?.reason === 'extracted') return 'The survivors are back aboard the ship.'
   if (current.resolution?.reason === 'survivor-rescued') return 'The rescue target is aboard. Carry the damage home.'
   if (current.resolution?.reason === 'deadline-expired') return 'The blast took the deployed crew and struck your hull.'
   return current.status === 'victory' ? 'Continue to carry the damage home.' : 'Continue to the campaign report.'
@@ -123,9 +137,21 @@ class TacticalScene extends Phaser.Scene {
   private lastFocusKey?: string
   private userPanned = false
   private panTween?: Phaser.Tweens.Tween
+  private board!: Phaser.GameObjects.Layer
+  private effects!: Phaser.GameObjects.Layer
+  private resizeFrame?: number
 
   create() {
+    this.board = this.add.layer()
+    this.effects = this.add.layer()
     sceneReady = true
+    this.scale.on(Phaser.Scale.Events.RESIZE, () => {
+      if (this.resizeFrame !== undefined) window.cancelAnimationFrame(this.resizeFrame)
+      this.resizeFrame = window.requestAnimationFrame(() => {
+        this.resizeFrame = undefined
+        this.draw()
+      })
+    })
     const camera = this.cameras.main
     let dragging = false
     let dragOrigin = { x: 0, y: 0 }
@@ -157,6 +183,16 @@ class TacticalScene extends Phaser.Scene {
       this.scrollTo(camera.scrollX + deltaX, camera.scrollY + deltaY)
     })
     renderApp()
+  }
+
+  clearBoard() {
+    for (const child of [...this.board.getChildren()]) child.destroy()
+  }
+
+  clearEffects() {
+    this.tweens.killAll()
+    this.time.removeAllEvents()
+    for (const child of [...this.effects.getChildren()]) child.destroy()
   }
 
   /** Pan the camera by a screen-space step, suspending auto-follow like a drag. */
@@ -258,8 +294,13 @@ class TacticalScene extends Phaser.Scene {
   }
 
   draw() {
-    if (!sceneReady || campaign.phase !== 'mission') return
-    this.children.removeAll()
+    if (!sceneReady || animating || campaign.phase !== 'mission' || tacticalContainer.clientWidth === 0) return
+    this.clearBoard()
+    const addText = (x: number, y: number, value: string, style: Phaser.Types.GameObjects.Text.TextStyle) => {
+      const text = this.add.text(x, y, value, style)
+      this.board.add(text)
+      return text
+    }
     const camera = this.cameras.main
     const worldWidth = OX * 2 + state.map.width * CELL
     const worldHeight = OY + state.map.height * CELL + 24
@@ -272,7 +313,7 @@ class TacticalScene extends Phaser.Scene {
         recenterCamera = false
         this.userPanned = false
         this.stopPan()
-        camera.centerOn(cx, cy)
+        this.scrollTo(cx - camera.width / 2, cy - camera.height / 2)
       } else if (state.selectedId !== this.lastSelectedId) {
         this.userPanned = false
         this.focus(cx, cy)
@@ -285,6 +326,7 @@ class TacticalScene extends Phaser.Scene {
     const pendingShots = state.lastShots.length > 0 && state.lastShots !== lastPlayedShots ? state.lastShots : []
     const dyingIds = new Set(pendingShots.filter(shot => shot.killed && shot.hitUnitId).map(shot => shot.hitUnitId!))
     const graphics = this.add.graphics()
+    this.board.add(graphics)
     const visible = new Set(currentVisibility(state).map(key))
     const explored = new Set(state.explored)
     const openDoors = new Set(state.openDoors)
@@ -390,44 +432,52 @@ class TacticalScene extends Phaser.Scene {
     for (const system of state.map.systems.filter(marker => explored.has(key(marker)))) {
       const isVisible = visible.has(key(system))
       graphics.fillStyle(0xf1bd5b, isVisible ? .55 : .2).fillRoundedRect(OX + system.x * CELL + 12, OY + system.y * CELL + 12, 32, 32, 5)
-      this.add.text(OX + system.x * CELL + 15, OY + system.y * CELL + 22, system.system, { fontFamily: 'monospace', fontSize: '10px', color: isVisible ? '#08121c' : '#7d704e' })
+      addText(OX + system.x * CELL + 15, OY + system.y * CELL + 22, system.system, { fontFamily: 'monospace', fontSize: '10px', color: isVisible ? '#08121c' : '#7d704e' })
     }
-    if (state.objective.kind === 'rescue') {
-      const target = state.objective.target
+    const objective = state.objective
+    const objectiveMarker = (target: { x: number; y: number }, label: string, active: boolean) => {
       const cx = OX + target.x * CELL + 28, cy = OY + target.y * CELL + 28
-      graphics.fillStyle(0xf1bd5b, .18).fillCircle(cx, cy, 23)
-      graphics.lineStyle(3, 0xf1bd5b, 1).strokeCircle(cx, cy, 20)
-      this.add.text(cx, cy, 'SOS', { fontFamily: 'monospace', fontSize: '11px', fontStyle: 'bold', color: '#f1bd5b' }).setOrigin(.5)
+      graphics.fillStyle(0xf1bd5b, active ? .18 : .08).fillCircle(cx, cy, 23)
+      graphics.lineStyle(3, 0xf1bd5b, active ? 1 : .4).strokeCircle(cx, cy, 20)
+      addText(cx, cy + 30, label, { fontFamily: 'monospace', fontSize: '11px', fontStyle: 'bold', color: active ? '#f1bd5b' : '#a4895a', backgroundColor: '#07101c' }).setOrigin(.5)
+    }
+    if (objective.kind === 'rescue') objectiveMarker(objective.target, 'SOS', true)
+    else if (objective.kind === 'sabotage') {
+      objectiveMarker(objective.beacon, state.beaconDisabled ? 'OFFLINE' : 'BEACON', !state.beaconDisabled)
+      objectiveMarker(objective.extraction, 'SHUTTLE', state.beaconDisabled)
     }
     for (const unit of state.units.filter(unit => (unit.hp > 0 || dyingIds.has(unit.id)) && (unit.team === 'crew' || visible.has(key(unit))))) {
       const cx = OX + unit.x * CELL + 28, cy = OY + unit.y * CELL + 28
       if (unit.id === state.selectedId) graphics.lineStyle(3, 0xffffff, 1).strokeCircle(cx, cy, 22)
+      if (state.overwatch.includes(unit.id)) graphics.lineStyle(2, 0x91c7ff, 1).strokeCircle(cx, cy, 26)
       if (legalTargetIds.has(unit.id)) {
         graphics.lineStyle(3, 0xf1bd5b, 1).strokeCircle(cx, cy, 22)
-        if (selected) this.add.text(cx, cy - 34, `${hitChance(state, selected, unit, fireMode)}%`, { fontFamily: 'monospace', fontSize: '13px', fontStyle: 'bold', color: '#f1bd5b' }).setOrigin(.5)
+        if (selected) addText(cx, cy - 34, `${hitChance(state, selected, unit, fireMode)}%`, { fontFamily: 'monospace', fontSize: '13px', fontStyle: 'bold', color: '#f1bd5b' }).setOrigin(.5)
       }
       graphics.fillStyle(unit.team === 'crew' ? 0x5de0d2 : 0xff5c68, 1).fillCircle(cx, cy, 17)
-      this.add.text(cx, cy, unit.name[0], { fontFamily: 'monospace', fontSize: '17px', fontStyle: 'bold', color: '#061019' }).setOrigin(.5)
+      addText(cx, cy, unit.name[0], { fontFamily: 'monospace', fontSize: '17px', fontStyle: 'bold', color: '#061019' }).setOrigin(.5)
       graphics.fillStyle(0x04070b, 1).fillRect(cx - 21, cy + 20, 42, 5)
       graphics.fillStyle(unit.team === 'crew' ? 0x5de0d2 : 0xff5c68, 1).fillRect(cx - 21, cy + 20, 42 * unit.hp / unit.maxHp, 5)
     }
     state.map.rooms.forEach(room => {
       if (!explored.has(key(room.label))) return
       const roomVisible = visible.has(key(room.label))
-      this.add.text(OX + room.label.x * CELL, OY + room.label.y * CELL + (room.label.y ? 35 : 8), room.name.toUpperCase(), { fontFamily: 'monospace', fontSize: '11px', color: roomVisible ? '#91a9b8' : '#425866' })
+      addText(OX + room.label.x * CELL, OY + room.label.y * CELL + (room.label.y ? 35 : 8), room.name.toUpperCase(), { fontFamily: 'monospace', fontSize: '11px', color: roomVisible ? '#91a9b8' : '#425866' })
     })
     const deadline = state.objective.kind === 'rescue' ? ` / ${String(state.objective.deadlineTurn).padStart(2, '0')}` : ''
-    const banner = selected
-      ? `TURN ${String(state.turn).padStart(2, '0')}${deadline}  //  ${state.phase.toUpperCase()} PHASE  //  ${selected.name.toUpperCase()} · ${selected.ap} TU · ${selected.hp}/${selected.maxHp} HP  //  ${FIRE_MODES[fireMode].label.toUpperCase()}`
-      : `TURN ${String(state.turn).padStart(2, '0')}${deadline}  //  ${state.phase.toUpperCase()} PHASE`
-    this.add.text(52, 26, banner, { fontFamily: 'monospace', fontSize: '20px', color: state.phase === 'player' ? '#63e3d6' : '#ff6670' }).setScrollFactor(0)
-    this.add.text(52, 52, state.log[0] ?? '', { fontFamily: 'monospace', fontSize: '14px', color: '#91a9b8' }).setScrollFactor(0)
+    const narrow = camera.width < 760
+    const turnLabel = `TURN ${String(state.turn).padStart(2, '0')}${deadline}  //  ${state.phase.toUpperCase()} PHASE`
+    const selectedLabel = selected ? `  //  ${selected.name.toUpperCase()} · ${selected.ap} TU · ${selected.hp}/${selected.maxHp} HP  //  ${FIRE_MODES[fireMode].label.toUpperCase()}` : ''
+    const margin = narrow ? 12 : 52
+    const wrap = { width: Math.max(120, camera.width - 2 * margin), useAdvancedWrap: true }
+    addText(margin, narrow ? 12 : 26, narrow ? turnLabel : turnLabel + selectedLabel, { fontFamily: 'monospace', fontSize: narrow ? '14px' : '20px', color: state.phase === 'player' ? '#63e3d6' : '#ff6670', backgroundColor: '#07101c' }).setScrollFactor(0)
+    addText(margin, narrow ? 32 : 52, state.log[0] ?? '', { fontFamily: 'monospace', fontSize: narrow ? '11px' : '14px', color: '#91a9b8', backgroundColor: '#07101c', wordWrap: wrap }).setScrollFactor(0)
     if (state.status !== 'playing' && pendingShots.length === 0) {
-      this.add.graphics().setScrollFactor(0).fillStyle(0x02060b, .86).fillRect(0, 0, camera.width, camera.height)
-      this.add.text(camera.width / 2, camera.height / 2 - 50, terminalTitle(state), { fontFamily: 'monospace', fontSize: '40px', fontStyle: 'bold', color: state.status === 'victory' ? '#63e3d6' : '#ff6670' }).setOrigin(.5).setScrollFactor(0)
-      this.add.text(camera.width / 2, camera.height / 2 + 4, terminalSubtitle(state), { fontFamily: 'monospace', fontSize: '17px', color: '#c7d6df' }).setOrigin(.5).setScrollFactor(0)
+      const backdrop = this.add.graphics().setScrollFactor(0).fillStyle(0x02060b, .86).fillRect(0, 0, camera.width, camera.height)
+      this.board.add(backdrop)
+      addText(camera.width / 2, camera.height / 2 - 32, terminalTitle(state), { fontFamily: 'monospace', fontSize: narrow ? '22px' : '40px', fontStyle: 'bold', color: state.status === 'victory' ? '#63e3d6' : '#ff6670', align: 'center', wordWrap: wrap }).setOrigin(.5).setScrollFactor(0)
+      addText(camera.width / 2, camera.height / 2 + 10, terminalSubtitle(state), { fontFamily: 'monospace', fontSize: narrow ? '13px' : '17px', color: '#c7d6df', align: 'center', wordWrap: wrap }).setOrigin(.5).setScrollFactor(0)
     }
-    updateTacticalHud(state)
 
     if (pendingShots.length > 0) {
       lastPlayedShots = state.lastShots
@@ -439,6 +489,7 @@ class TacticalScene extends Phaser.Scene {
     } else {
       lastPlayedShots = state.lastShots
     }
+    updateTacticalHud(state)
   }
 
   animateShots(shots: readonly ShotResult[], done: () => void) {
@@ -452,7 +503,9 @@ class TacticalScene extends Phaser.Scene {
       const from = center(shot.from)
       const to = center(shot.impact)
       this.ensureVisible((from.x + to.x) / 2, (from.y + to.y) / 2)
-      const tracer = this.add.circle(from.x, from.y, 5, shot.team === 'crew' ? 0xd9fff7 : 0xffb0b6, 1)
+      const tracerColor = shot.reaction ? 0x91c7ff : shot.team === 'crew' ? 0xd9fff7 : 0xffb0b6
+      const tracer = this.add.circle(from.x, from.y, 5, tracerColor, 1)
+      this.effects.add(tracer)
       const flight = Math.max(90, Math.hypot(to.x - from.x, to.y - from.y) * 0.85)
       this.tweens.add({
         targets: tracer,
@@ -473,24 +526,31 @@ class TacticalScene extends Phaser.Scene {
   impactEffect(shot: ShotResult, at: { x: number; y: number }) {
     if (shot.hitUnitId) {
       const flash = this.add.circle(at.x, at.y, 12, 0xffffff, 0.95)
+      this.effects.add(flash)
       this.tweens.add({ targets: flash, scale: shot.killed ? 2.6 : 1.8, alpha: 0, duration: shot.killed ? 380 : 240, onComplete: () => flash.destroy() })
       const text = this.add.text(at.x, at.y - 16, `-${shot.damage}`, { fontFamily: 'monospace', fontSize: '17px', fontStyle: 'bold', color: '#ff6670' }).setOrigin(.5)
+      this.effects.add(text)
       this.tweens.add({ targets: text, y: at.y - 44, alpha: 0, duration: 620, onComplete: () => text.destroy() })
       if (shot.killed) {
         const ring = this.add.circle(at.x, at.y, 16, 0x000000, 0).setStrokeStyle(3, 0xff5c68, 1)
+        this.effects.add(ring)
         this.tweens.add({ targets: ring, scale: 2.4, alpha: 0, duration: 430, onComplete: () => ring.destroy() })
       }
     } else if (shot.hitStructureAt) {
       const flash = this.add.circle(at.x, at.y, 11, 0xf1bd5b, 0.9)
+      this.effects.add(flash)
       this.tweens.add({ targets: flash, scale: shot.structureDestroyed ? 2.4 : 1.6, alpha: 0, duration: shot.structureDestroyed ? 400 : 230, onComplete: () => flash.destroy() })
       const text = this.add.text(at.x, at.y - 16, `-${shot.damage}`, { fontFamily: 'monospace', fontSize: '15px', fontStyle: 'bold', color: '#f1bd5b' }).setOrigin(.5)
+      this.effects.add(text)
       this.tweens.add({ targets: text, y: at.y - 40, alpha: 0, duration: 560, onComplete: () => text.destroy() })
       if (shot.structureDestroyed) {
         const dust = this.add.circle(at.x, at.y, 15, 0x000000, 0).setStrokeStyle(3, 0xc9b48a, 1)
+        this.effects.add(dust)
         this.tweens.add({ targets: dust, scale: 2.2, alpha: 0, duration: 460, onComplete: () => dust.destroy() })
       }
     } else if (shot.struckObstacle) {
       const spark = this.add.circle(at.x, at.y, 7, 0xc9d2d8, 0.85)
+      this.effects.add(spark)
       this.tweens.add({ targets: spark, scale: 1.7, alpha: 0, duration: 220, onComplete: () => spark.destroy() })
     }
   }
@@ -556,7 +616,9 @@ const ROUTE_COPY: Readonly<Record<SystemKind, { signal: string; heading: string;
 
 function routeCard(offer: DestinationOffer): string {
   const copy = ROUTE_COPY[offer.kind]
-  return `<article class="route-card ${offer.kind}"><p class="route-signal">${copy.signal}</p><h3>${offer.name}</h3><p><strong>${copy.heading}</strong></p><p>${copy.body}</p><p class="route-likelihood"><span>${copy.likely}</span><span>${copy.danger}</span></p><button data-campaign-action="route:${offer.id}">JUMP TO ${offer.name.toUpperCase()} · 1 FUEL</button></article>`
+  const cost = destinationFuelCost(campaign, offer)
+  const affordable = campaign.fuel >= cost
+  return `<article class="route-card ${offer.kind}"><p class="route-signal">${copy.signal}</p><h3>${offer.name}</h3><p><strong>${copy.heading}</strong></p><p>${copy.body}</p><p class="route-likelihood"><span>${copy.likely}</span><span>${copy.danger}</span></p><button data-campaign-action="route:${offer.id}" ${affordable ? '' : 'disabled'}>${affordable ? `JUMP TO ${offer.name.toUpperCase()} · ${cost} FUEL` : `NEED ${cost} FUEL`}</button></article>`
 }
 
 const MAP_SIZE = 560
@@ -572,7 +634,7 @@ function systemPosition(system: StarSystem): { x: number; y: number } {
 function galaxyMapSvg(current: CampaignState): string {
   const galaxy = current.galaxy
   const visited = new Set(current.visitedSystemIds)
-  const reachable = new Set(current.offers.map(offer => offer.id))
+  const reachable = new Set(current.offers.filter(offer => current.fuel >= destinationFuelCost(current, offer)).map(offer => offer.id))
   const revealed = revealedSystemIds(galaxy, current.visitedSystemIds)
 
   const lanes: string[] = []
@@ -619,13 +681,16 @@ function galaxyMapSvg(current: CampaignState): string {
 
 function renderRoute(): string {
   const here = systemById(campaign.galaxy, campaign.currentSystemId)
-  const count = campaign.offers.length
-  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">NAVIGATION // GALAXY MAP</p><h2 id="campaign-heading" tabindex="-1">${count === 1 ? 'One reachable signal.' : `${count} reachable signals.`} Fuel for one.</h2><p class="campaign-lede">Holding at ${here.name}. Every jump costs 1 fuel and burns the route behind you: the ship can hold its ring or fall inward toward the core, never climb back out. Reach the Galactic Core. Run seed: ${campaign.seed}.</p><div class="galaxy-frame">${galaxyMapSvg(campaign)}<div class="galaxy-legend"><span class="legend-current">Current</span><span class="legend-open">In range</span><span class="legend-revealed">Charted</span><span class="legend-visited">Visited</span><span class="legend-uncharted">Uncharted</span></div></div><div class="route-grid">${campaign.offers.map(routeCard).join('')}</div></div>`
+  const count = campaign.offers.filter(offer => campaign.fuel >= destinationFuelCost(campaign, offer)).length
+  const fuelRule = campaign.systems.engines === 'damaged'
+    ? 'Damaged engines spend 2 fuel on same-ring jumps and 1 fuel going inward.'
+    : 'Jumps cost 1 fuel.'
+  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">NAVIGATION // GALAXY MAP</p><h2 id="campaign-heading" tabindex="-1">${count === 1 ? 'One reachable signal' : `${count} reachable signals`}</h2><p class="campaign-lede">Holding at ${here.name}. ${fuelRule} Follow your ring or jump inward toward the Galactic Core. Each system can be visited once. Run seed: ${campaign.seed}.</p><div class="galaxy-frame">${galaxyMapSvg(campaign)}<div class="galaxy-legend"><span class="legend-current">Current</span><span class="legend-open">In range</span><span class="legend-revealed">Charted</span><span class="legend-visited">Visited</span><span class="legend-uncharted">Uncharted</span></div></div><div class="route-grid">${campaign.offers.map(routeCard).join('')}</div></div>`
 }
 
 function renderCampaignVictory(): string {
   const living = campaign.crew.filter(crew => crew.hp > 0).length
-  return `<div class="campaign-panel campaign-victory">${campaignStrip(campaign)}<p class="kicker">CAMPAIGN VICTORY // GALACTIC CORE</p><h2 id="campaign-heading" tabindex="-1">The core opens before you.</h2><p class="campaign-lede">${systemById(campaign.galaxy, campaign.currentSystemId).name} swallows every signal you followed to reach it. The ship holds. The crew is watching. Whatever waits at the heart of the galaxy, you have arrived to meet it — the final battle itself lands in a future build.</p><div class="campaign-report"><span>JUMPS<strong>${campaign.jump}</strong></span><span>SYSTEMS VISITED<strong>${campaign.visitedSystemIds.length}/${campaign.galaxy.systems.length}</strong></span><span>CREW ALIVE<strong>${living}/${campaign.crew.length}</strong></span><span>HULL<strong>${campaign.hull}/${campaign.maxHull}</strong></span></div>${campaignRoster(campaign.crew)}<div class="campaign-actions"><button data-campaign-action="restart-campaign">START A NEW RUN</button></div></div>`
+  return `<div class="campaign-panel campaign-victory">${campaignStrip(campaign)}<p class="kicker">CAMPAIGN VICTORY // GALACTIC CORE</p><h2 id="campaign-heading" tabindex="-1">The Core has gone quiet.</h2><p class="campaign-lede">The relay is silent. Your boarding team is back aboard, and for the first time since the frontier, the ship can take a breath.</p><div class="campaign-report"><span>FINAL OBJECTIVE<strong>${campaign.missionReport?.objective ?? 'Beacon silenced'}</strong></span><span>JUMPS<strong>${campaign.jump}</strong></span><span>SYSTEMS VISITED<strong>${campaign.visitedSystemIds.length}/${campaign.galaxy.systems.length}</strong></span><span>CREW ALIVE<strong>${living}/${campaign.crew.length}</strong></span><span>HULL<strong>${campaign.hull}/${campaign.maxHull}</strong></span><span>RUN SEED<strong>${campaign.seed}</strong></span></div>${campaignRoster(campaign.crew)}<div class="campaign-actions"><button data-campaign-action="restart-campaign">START A NEW RUN</button></div></div>`
 }
 
 function moonResult(encounter: MoonEncounter): { kicker: string; heading: string; body: string; deltas: string[] } {
@@ -635,7 +700,7 @@ function moonResult(encounter: MoonEncounter): { kicker: string; heading: string
     return { kicker: 'MOON // PRESSURE SHELTER', heading: 'Someone answers from beneath the regolith.', body: joined ? `${encounter.recruit!.name} joins the ship with whatever they could carry.` : 'The roster is full, but the survivor reaches safety.', deltas: [joined ? 'CREW|+1 SURVIVOR' : 'CREW|ROSTER FULL'] }
   }
   if (encounter.outcome === 'fuel') return { kicker: 'MOON // EMERGENCY DEPOT', heading: 'The reserve tanks still hold pressure.', body: 'Ancient propellant is ugly, stable, and exactly what the engines need.', deltas: [`FUEL CACHE|UP TO +${encounter.fuel}`] }
-  return { kicker: 'MOON // BIOLOGICAL CONTACT', heading: 'Something vast rolls through your engine wake.', body: 'The space amoeba leaves luminous scars across the hull and vanishes into the dark.', deltas: [`HULL|-${encounter.hullDamage}`] }
+  return { kicker: 'MOON // BIOLOGICAL CONTACT', heading: 'Something vast rolls through your engine wake.', body: 'The space amoeba scars the hull and damages the engines. Same-ring jumps now cost 2 fuel.', deltas: [`HULL|-${encounter.hullDamage}`, 'ENGINES|DAMAGED'] }
 }
 
 function eventDeltas(deltas: readonly string[]): string {
@@ -664,7 +729,7 @@ function renderStarbase(encounter: StarbaseEncounter): string {
   const mercDisabled = !encounter.mercenary || campaign.credits < encounter.mercenaryPrice || livingCrew >= CAMPAIGN_TUNING.rosterCap
   const sellDisabled = campaign.salvage <= 0
   const fuelUnits = `${encounter.fuelStock} ${encounter.fuelStock === 1 ? 'unit' : 'units'}`
-  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">STARBASE // MARKET</p><h2 id="campaign-heading" tabindex="-1">${encounter.name} sells survival at a markup.</h2><p class="campaign-lede">Purchases do not consume another jump. Stock and contracts were rolled on arrival; depart when ready.</p><div class="market-grid"><article class="market-offer ${encounter.fuelStock <= 0 ? 'sold-out' : ''}"><p class="kicker">DOCKMASTER // FUEL</p><h3>Reactor propellant</h3><p>${fuelUnits} in stock. Buy 1 fuel for ${encounter.fuelPrice} credits.</p><button data-campaign-action="buy-fuel" ${fuelDisabled ? 'disabled' : ''}>${encounter.fuelStock <= 0 ? 'SOLD OUT' : campaign.fuel >= campaign.maxFuel ? 'TANKS FULL' : campaign.credits < encounter.fuelPrice ? `NEED ${encounter.fuelPrice} CREDITS` : `BUY 1 FUEL · ${encounter.fuelPrice} CREDITS`}</button></article><article class="market-offer"><p class="kicker">BROKER // SALVAGE</p><h3>Sell recovered material</h3><p>Trade 1 salvage for ${CAMPAIGN_TUNING.salvageSalePrice} credits. The rate is insulting and reliable.</p><button data-campaign-action="sell-salvage" ${sellDisabled ? 'disabled' : ''}>${sellDisabled ? 'NO SALVAGE' : `SELL 1 SALVAGE · +${CAMPAIGN_TUNING.salvageSalePrice} CREDITS`}</button></article><article class="market-offer ${weaponDisabled ? 'sold-out' : ''}"><p class="kicker">SURPLUS // WEAPONS</p><h3>Mediocre boarding rifles</h3><p>Permanent +1 crew weapon damage. One upgrade is enough for this prototype.</p><button data-campaign-action="buy-weapon" ${weaponDisabled ? 'disabled' : ''}>${weaponOwned ? 'ALREADY INSTALLED' : !encounter.weaponAvailable ? 'NO STOCK' : campaign.credits < encounter.weaponPrice ? `NEED ${encounter.weaponPrice} CREDITS` : `BUY RIFLES · ${encounter.weaponPrice} CREDITS`}</button></article><article class="market-offer ${!encounter.mercenary ? 'sold-out' : ''}"><p class="kicker">CONTRACT // CREW</p><h3>${encounter.mercenary?.name ?? 'No one is taking contracts'}</h3><p>${encounter.mercenary ? `${encounter.mercenary.role}. Fit, armed, and asking ${encounter.mercenaryPrice} credits.` : 'The mercenary booth is empty this jump.'}</p><button data-campaign-action="hire-mercenary" ${mercDisabled ? 'disabled' : ''}>${livingCrew >= CAMPAIGN_TUNING.rosterCap ? 'ROSTER FULL' : !encounter.mercenary ? 'NO CONTRACT' : campaign.credits < encounter.mercenaryPrice ? `NEED ${encounter.mercenaryPrice} CREDITS` : `HIRE · ${encounter.mercenaryPrice} CREDITS`}</button></article></div><div class="campaign-actions"><button data-campaign-action="leave-starbase">PLOT NEXT JUMP</button></div></div>`
+  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">STARBASE // MARKET</p><h2 id="campaign-heading" tabindex="-1">${encounter.name} sells survival at a markup.</h2><p class="campaign-lede">Trade and make repairs before plotting the next jump.</p><div class="market-grid"><article class="market-offer ${encounter.fuelStock <= 0 ? 'sold-out' : ''}"><p class="kicker">DOCKMASTER // FUEL</p><h3>Reactor propellant</h3><p>${fuelUnits} in stock. Buy 1 fuel for ${encounter.fuelPrice} credits.</p><button data-campaign-action="buy-fuel" ${fuelDisabled ? 'disabled' : ''}>${encounter.fuelStock <= 0 ? 'SOLD OUT' : campaign.fuel >= campaign.maxFuel ? 'TANKS FULL' : campaign.credits < encounter.fuelPrice ? `NEED ${encounter.fuelPrice} CREDITS` : `BUY 1 FUEL · ${encounter.fuelPrice} CREDITS`}</button></article><article class="market-offer"><p class="kicker">BROKER // SALVAGE</p><h3>Sell recovered material</h3><p>Trade 1 salvage for ${CAMPAIGN_TUNING.salvageSalePrice} credits. The rate is insulting and reliable.</p><button data-campaign-action="sell-salvage" ${sellDisabled ? 'disabled' : ''}>${sellDisabled ? 'NO SALVAGE' : `SELL 1 SALVAGE · +${CAMPAIGN_TUNING.salvageSalePrice} CREDITS`}</button></article><article class="market-offer ${weaponDisabled ? 'sold-out' : ''}"><p class="kicker">SURPLUS // WEAPONS</p><h3>Improved boarding rifles</h3><p>Permanent +1 crew weapon damage.</p><button data-campaign-action="buy-weapon" ${weaponDisabled ? 'disabled' : ''}>${weaponOwned ? 'ALREADY INSTALLED' : !encounter.weaponAvailable ? 'NO STOCK' : campaign.credits < encounter.weaponPrice ? `NEED ${encounter.weaponPrice} CREDITS` : `BUY RIFLES · ${encounter.weaponPrice} CREDITS`}</button></article><article class="market-offer ${!encounter.mercenary ? 'sold-out' : ''}"><p class="kicker">CONTRACT // CREW</p><h3>${encounter.mercenary?.name ?? 'No one is taking contracts'}</h3><p>${encounter.mercenary ? `${encounter.mercenary.role}. Fit, armed, and asking ${encounter.mercenaryPrice} credits.` : 'The mercenary booth is empty this jump.'}</p><button data-campaign-action="hire-mercenary" ${mercDisabled ? 'disabled' : ''}>${livingCrew >= CAMPAIGN_TUNING.rosterCap ? 'ROSTER FULL' : !encounter.mercenary ? 'NO CONTRACT' : campaign.credits < encounter.mercenaryPrice ? `NEED ${encounter.mercenaryPrice} CREDITS` : `HIRE · ${encounter.mercenaryPrice} CREDITS`}</button></article>${systemRepairOptions(true)}</div><div class="campaign-actions"><button data-campaign-action="leave-starbase">PLOT NEXT JUMP</button></div></div>`
 }
 
 function distressBriefing(encounter: DistressEncounter): { kicker: string; heading: string; body: string; button: string; deadline?: string } {
@@ -688,6 +753,9 @@ function renderEncounter(): string {
   const encounter = campaign.encounter!
   if (encounter.kind === 'starbase') return renderStarbase(encounter)
   if (encounter.kind === 'abandoned-moon') return renderMoon(encounter)
+  if (encounter.kind === 'core') {
+    return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">GALACTIC CORE // FINAL MISSION</p><h2 id="campaign-heading" tabindex="-1">Silence the beacon.</h2><p class="campaign-lede">Every distress signal on the frontier carries the same pulse. Your crew has traced it to a guarded relay at the Core.</p><div class="encounter-banner"><p><strong>DISABLE THE BEACON, THEN EXTRACT</strong></p><p>Move a crew member onto the beacon tile. Once it goes dark, move any living crew member onto the shuttle tile to extract the survivors. Leave someone by the shuttle or move the whole squad in together.</p></div><div class="campaign-actions"><button data-campaign-action="begin-mission">BOARD THE CORE RELAY</button></div></div>`
+  }
   return renderDistress(encounter)
 }
 
@@ -698,17 +766,28 @@ function debriefHeading(): string {
   return 'The distress ship is safe enough to search.'
 }
 
+function systemRepairOptions(atStarbase: boolean): string {
+  const cost = CAMPAIGN_TUNING.repairCost
+  const affordable = campaign.salvage >= cost
+  return shipSystemIds.filter(system => campaign.systems[system] === 'damaged').map(system => {
+    const { label, effect } = SHIP_SYSTEMS[system]
+    return `<article class="${atStarbase ? 'market-offer' : 'campaign-choice'}"><p class="kicker">WORKSHOP // ${label.toUpperCase()}</p><h3>Repair ${label.toLowerCase()}</h3><p>Spend ${cost} salvage. ${effect}</p><button data-campaign-action="${atStarbase ? 'repair' : 'recover'}-${system}" ${affordable ? '' : 'disabled'}>${affordable ? `REPAIR ${label.toUpperCase()}${atStarbase ? '' : ' & NAVIGATE'}` : `NEED ${cost} SALVAGE`}</button></article>`
+  }).join('')
+}
+
 function renderDebrief(): string {
   const report = campaign.missionReport!
   const wounded = campaign.crew.some(crew => crew.hp > 0 && crew.hp < crew.maxHp)
   const canTreat = campaign.salvage >= CAMPAIGN_TUNING.repairCost && wounded
   const canRepair = campaign.salvage >= CAMPAIGN_TUNING.repairCost && campaign.hull < campaign.maxHull
+  const healing = medbayHealing(campaign.systems, CAMPAIGN_TUNING.crewRecoveryAmount)
   const recruit = campaign.activeMission?.recruit
   const recruited = recruit && campaign.crew.some(crew => crew.id === recruit.id)
-  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">AFTER ACTION // ${campaign.activeMission?.kind.replaceAll('-', ' ').toUpperCase()}</p><h2 id="campaign-heading" tabindex="-1">${debriefHeading()}</h2><p class="campaign-lede">Choose one intervention before returning to navigation. Every untreated wound and every unspent resource carries forward.</p><div class="campaign-report"><span>MISSION<strong>VICTORY · JUMP ${report.jump}</strong></span><span>SALVAGE<strong>+${report.salvageGained}</strong></span><span>CREDITS<strong>+${report.creditsGained}</strong></span><span>FUEL<strong>+${report.fuelGained}</strong></span><span>HULL DAMAGE<strong>-${report.hullDamage}</strong></span><span>OBJECTIVE<strong>${report.objective}</strong></span></div>${recruited ? `<div class="encounter-banner"><p><strong>NEW CREW // ${recruit.name.toUpperCase()}</strong></p><p>${recruit.role} · ${recruit.hp}/${recruit.maxHp} HP</p></div>` : ''}${campaignRoster(campaign.crew)}<div class="campaign-choice-grid"><article class="campaign-choice"><p class="kicker">MEDBAY // TRIAGE</p><h3>Treat the survivors</h3><p>Spend ${CAMPAIGN_TUNING.repairCost} salvage. Every living wounded crew member recovers ${CAMPAIGN_TUNING.crewRecoveryAmount} HP.</p><button data-campaign-action="recover-crew" ${canTreat ? '' : 'disabled'}>${wounded ? campaign.salvage >= CAMPAIGN_TUNING.repairCost ? 'TRIAGE & NAVIGATE' : `NEED ${CAMPAIGN_TUNING.repairCost} SALVAGE` : 'NO WOUNDED CREW'}</button></article><article class="campaign-choice"><p class="kicker">WORKSHOP // HULL</p><h3>Seal the damage</h3><p>Spend ${CAMPAIGN_TUNING.repairCost} salvage to restore ${CAMPAIGN_TUNING.repairAmount} hull before plotting the next jump.</p><button data-campaign-action="recover-hull" ${canRepair ? '' : 'disabled'}>${campaign.hull >= campaign.maxHull ? 'HULL IS INTACT' : campaign.salvage >= CAMPAIGN_TUNING.repairCost ? 'REPAIR & NAVIGATE' : `NEED ${CAMPAIGN_TUNING.repairCost} SALVAGE`}</button></article><article class="campaign-choice"><p class="kicker">CARGO // RESERVE</p><h3>Bank the salvage</h3><p>Make no repairs. Carry everything recovered into the next route choice.</p><button data-campaign-action="recover-bank">BANK & NAVIGATE</button></article></div></div>`
+  return `<div class="campaign-panel">${campaignStrip(campaign)}<p class="kicker">AFTER ACTION // ${campaign.activeMission?.kind.replaceAll('-', ' ').toUpperCase()}</p><h2 id="campaign-heading" tabindex="-1">${debriefHeading()}</h2><p class="campaign-lede">Choose one intervention before returning to navigation. Every untreated wound and every unspent resource carries forward.</p><div class="campaign-report"><span>MISSION<strong>VICTORY · JUMP ${report.jump}</strong></span><span>SALVAGE<strong>+${report.salvageGained}</strong></span><span>CREDITS<strong>+${report.creditsGained}</strong></span><span>FUEL<strong>+${report.fuelGained}</strong></span><span>HULL DAMAGE<strong>-${report.hullDamage}</strong></span><span>OBJECTIVE<strong>${report.objective}</strong></span>${report.damagedSystem ? `<span>SYSTEM DAMAGE<strong>${SHIP_SYSTEMS[report.damagedSystem].label}</strong></span>` : ''}</div>${recruited ? `<div class="encounter-banner"><p><strong>NEW CREW // ${recruit.name.toUpperCase()}</strong></p><p>${recruit.role} · ${recruit.hp}/${recruit.maxHp} HP</p></div>` : ''}${campaignRoster(campaign.crew)}<div class="campaign-choice-grid"><article class="campaign-choice"><p class="kicker">MEDBAY // TRIAGE</p><h3>Treat the survivors</h3><p>Spend ${CAMPAIGN_TUNING.repairCost} salvage. Every living wounded crew member recovers ${healing} HP${campaign.systems.medbay === 'damaged' ? ' with the damaged medbay' : ''}.</p><button data-campaign-action="recover-crew" ${canTreat ? '' : 'disabled'}>${wounded ? campaign.salvage >= CAMPAIGN_TUNING.repairCost ? 'TRIAGE & NAVIGATE' : `NEED ${CAMPAIGN_TUNING.repairCost} SALVAGE` : 'NO WOUNDED CREW'}</button></article><article class="campaign-choice"><p class="kicker">WORKSHOP // HULL</p><h3>Seal the damage</h3><p>Spend ${CAMPAIGN_TUNING.repairCost} salvage to restore ${CAMPAIGN_TUNING.repairAmount} hull before plotting the next jump.</p><button data-campaign-action="recover-hull" ${canRepair ? '' : 'disabled'}>${campaign.hull >= campaign.maxHull ? 'HULL IS INTACT' : campaign.salvage >= CAMPAIGN_TUNING.repairCost ? 'REPAIR & NAVIGATE' : `NEED ${CAMPAIGN_TUNING.repairCost} SALVAGE`}</button></article>${systemRepairOptions(false)}<article class="campaign-choice"><p class="kicker">CARGO // RESERVE</p><h3>Bank the salvage</h3><p>Make no repairs. Carry everything recovered into the next route choice.</p><button data-campaign-action="recover-bank">BANK & NAVIGATE</button></article></div></div>`
 }
 
 function lossReason(): { kicker: string; heading: string; body: string } {
+  if (campaign.currentSystemId === campaign.galaxy.coreId && campaign.missionReport) return { kicker: 'CAMPAIGN LOST // GALACTIC CORE', heading: 'The shuttle left empty.', body: 'The boarding team was lost before anyone could extract from the relay.' }
   if (campaign.missionReport?.reason === 'deadline-expired') return { kicker: 'CAMPAIGN LOST // REACTOR DETONATION', heading: 'The reactor went before extraction.', body: 'The deployed crew died aboard the distress ship. The blast tore through your hull and ended the run.' }
   if (campaign.missionReport?.outcome === 'defeat') return { kicker: 'CAMPAIGN LOST // BOARDING TEAM DOWN', heading: 'No one returned from the signal.', body: 'The mission failed and the ship no longer has a viable boarding command.' }
   if (!campaign.crew.some(crew => crew.hp > 0)) return { kicker: 'CAMPAIGN LOST // NO CREW', heading: 'The last name leaves the duty roster.', body: 'The ship remains, but no living crew can command it.' }
@@ -754,28 +833,37 @@ function phaseTitle(): string {
   if (campaign.phase === 'route') return 'Plot the next jump'
   if (campaign.phase === 'encounter') return campaign.encounter?.name ?? 'Signal contact'
   if (campaign.phase === 'debrief') return 'Mission consequences'
-  if (campaign.phase === 'victory') return 'Galactic core reached'
+  if (campaign.phase === 'victory') return 'Core relay disabled'
   return 'Campaign ended'
 }
 
 function renderCampaignHud() {
   const report = campaign.missionReport
-  hud.innerHTML = `<div><p class="kicker">CAMPAIGN // ${campaign.phase.toUpperCase()}</p><h2>${phaseTitle()}</h2><p>Jump ${campaign.jump} · ${campaign.fuel}/${campaign.maxFuel} fuel</p></div><section><h3>Mobile base</h3><p><strong>Hull ${campaign.hull}/${campaign.maxHull}</strong><br>${campaign.credits} credits · ${campaign.salvage} salvage<br>Boarding rifles · ${campaign.weaponDamage} damage</p></section><section><h3>Persistent crew</h3>${campaignRoster(campaign.crew)}</section>${report ? `<section><h3>Last mission</h3><p>${report.outcome === 'victory' ? 'Objective complete' : 'Mission failed'} · ${report.salvageGained} salvage · ${report.creditsGained} credits · ${report.hullDamage} hull damage</p></section>` : ''}`
+  const systems = shipSystemIds.map(system => `<div><dt>${SHIP_SYSTEMS[system].label}</dt><dd class="${campaign.systems[system]}">${campaign.systems[system]}</dd></div>`).join('')
+  hud.innerHTML = `<div><p class="kicker">CAMPAIGN // ${campaign.phase.toUpperCase()}</p><h2>${phaseTitle()}</h2><p>Jump ${campaign.jump} · ${campaign.fuel}/${campaign.maxFuel} fuel</p></div><section><h3>Mobile base</h3><p><strong>Hull ${campaign.hull}/${campaign.maxHull}</strong><br>${campaign.credits} credits · ${campaign.salvage} salvage<br>Boarding rifles · ${campaign.weaponDamage} damage</p><dl class="ship-systems">${systems}</dl></section><section><h3>Persistent crew</h3>${campaignRoster(campaign.crew)}</section>${report ? `<section><h3>Last mission</h3><p>${report.outcome === 'victory' ? 'Objective complete' : 'Mission failed'} · ${report.salvageGained} salvage · ${report.creditsGained} credits · ${report.hullDamage} hull damage</p></section>` : ''}`
 }
 
 function updateTacticalHud(current: GameState) {
   const selected = current.units.find(unit => unit.id === current.selectedId)
+  const canAct = current.phase === 'player' && current.status === 'playing' && !animating
+  const watching = selected !== undefined && current.overwatch.includes(selected.id)
   const modeMarkup = (['snap', 'auto', 'aimed'] as const).map((id, index) => {
     const mode = FIRE_MODES[id]
-    const affordable = (selected?.ap ?? 0) >= mode.cost
-    return `<button class="fire-mode ${fireMode === id ? 'active' : ''}" data-fire-mode="${id}" ${affordable ? '' : 'disabled'}><span>${index + 1} · ${mode.label.toUpperCase()}</span><b>${mode.cost} TU${mode.shots > 1 ? ` · ${mode.shots} RDS` : ''}</b></button>`
+    const enabled = canAct && (selected?.ap ?? 0) >= mode.cost
+    return `<button class="fire-mode ${fireMode === id ? 'active' : ''}" data-fire-mode="${id}" aria-pressed="${fireMode === id}" ${enabled ? '' : 'disabled'}><span>${index + 1} · ${mode.label.toUpperCase()}</span><b>${mode.cost} TU${mode.shots > 1 ? ` · ${mode.shots} RDS` : ''}</b></button>`
   }).join('')
+  const overwatchMarkup = `<button class="fire-mode ${watching ? 'active' : ''}" data-overwatch aria-pressed="${watching}" ${canAct && canSetOverwatch(current) ? '' : 'disabled'}><span>O · OVERWATCH</span><b>${watching ? 'READY' : `${FIRE_MODES.snap.cost} TU`}</b></button>`
+  const objective = current.objective
+  const objectiveText = objective.kind === 'sabotage'
+    ? (current.beaconDisabled ? 'Beacon disabled. Move any survivor to the shuttle.' : 'Move a crew member onto the beacon tile.')
+    : objective.label
   const crewMarkup = campaign.crew.map(record => {
     const unit = current.units.find(candidate => candidate.id === record.id)
     const hp = unit?.hp ?? 0
-    return `<button class="unit ${hp <= 0 ? 'dead' : ''}" data-unit="${record.id}" ${hp <= 0 ? 'disabled' : ''}><span>${record.name}<small>${record.role} · ${record.accuracy} ACC</small></span><b>${hp > 0 ? `${hp}/${record.maxHp} HP · ${unit!.ap} TU` : 'KIA'}</b></button>`
+    return `<button class="unit ${hp <= 0 ? 'dead' : ''}" data-unit="${record.id}" ${canAct && hp > 0 ? '' : 'disabled'}><span>${record.name}<small>${record.role} · ${record.accuracy} ACC${current.overwatch.includes(record.id) ? ' · OVERWATCH' : ''}</small></span><b>${hp > 0 ? `${hp}/${record.maxHp} HP · ${unit!.ap} TU` : 'KIA'}</b></button>`
   }).join('')
-  hud.innerHTML = `<section><h3>Selected</h3><p>${selected ? `<strong>${selected.name}</strong><br>${selected.role} · ${selected.ap} TU · ${selected.hp}/${selected.maxHp} HP · ${selected.accuracy} ACC` : 'Enemy activity…'}</p><div class="fire-modes">${modeMarkup}</div></section><section><h3>Crew manifest</h3>${crewMarkup}</section>`
+  hud.innerHTML = `<section><h3>Selected</h3><p>${selected ? `<strong>${selected.name}</strong><br>${selected.role} · ${selected.ap} TU · ${selected.hp}/${selected.maxHp} HP · ${selected.accuracy} ACC` : current.status === 'playing' ? 'Enemy activity…' : 'Mission complete'}</p><div class="fire-modes">${modeMarkup}${overwatchMarkup}</div><p class="tactical-hint">Overwatch takes one snap shot when a hostile moves through a clear lane.</p></section><section><h3>Objective</h3><p>${current.status === 'playing' ? objectiveText : terminalTitle(current)}</p></section><section><h3>Crew manifest</h3>${crewMarkup}</section>`
+  hud.querySelector<HTMLButtonElement>('[data-overwatch]')!.onclick = () => controller.replace(setOverwatch(state))
   hud.querySelectorAll<HTMLButtonElement>('[data-unit]').forEach(button => button.onclick = () => {
     button.blur()
     controller.replace(selectUnit(state, button.dataset.unit!))
@@ -814,6 +902,7 @@ function renderApp() {
       queueMicrotask(() => tacticalContainer.focus())
     }
   } else {
+    if (sceneReady) scene.clearBoard()
     renderCampaignScreen()
     renderCampaignHud()
   }
@@ -827,7 +916,7 @@ function lockTransition(action: () => void) {
 }
 
 function resetShotAnimation() {
-  if (sceneReady) scene.tweens.killAll()
+  if (sceneReady) scene.clearEffects()
   animating = false
   lastPlayedShots = []
 }
@@ -856,11 +945,15 @@ function handleCampaignAction(action: string) {
     else if (action === 'sell-salvage') campaign = sellSalvage(before)
     else if (action === 'buy-weapon') campaign = buyWeapon(before)
     else if (action === 'hire-mercenary') campaign = hireMercenary(before)
+    else if (action === 'repair-medbay') campaign = repairAtStarbase(before, 'medbay')
+    else if (action === 'repair-engines') campaign = repairAtStarbase(before, 'engines')
     else if (action === 'begin-mission') {
       enterMission()
       return
     } else if (action === 'recover-crew') campaign = chooseRecovery(before, 'crew')
     else if (action === 'recover-hull') campaign = chooseRecovery(before, 'hull')
+    else if (action === 'recover-medbay') campaign = chooseRecovery(before, 'medbay')
+    else if (action === 'recover-engines') campaign = chooseRecovery(before, 'engines')
     else if (action === 'recover-bank') campaign = chooseRecovery(before, 'bank')
     else if (action === 'restart-campaign') {
       restartCampaign()
@@ -868,7 +961,7 @@ function handleCampaignAction(action: string) {
     }
     const screenChanged = campaign.phase !== before.phase || campaign.encounter?.resolved !== before.encounter?.resolved
     if (campaign !== before && screenChanged) focusNextScreen = true
-    else if (campaign !== before && ['buy-fuel', 'sell-salvage', 'buy-weapon', 'hire-mercenary'].includes(action)) focusNextAction = action
+    else if (campaign !== before) focusNextAction = action
     renderApp()
   })
 }
@@ -897,6 +990,8 @@ function configureTacticalActions() {
   const complete = state.status !== 'playing'
   endTurnButton.textContent = complete ? 'CONTINUE' : 'END TURN'
   restartButton.textContent = 'NEW RUN'
+  endTurnButton.disabled = animating || (!complete && state.phase !== 'player')
+  restartButton.disabled = animating
   endTurnButton.onclick = () => {
     endTurnButton.blur()
     if (animating) return
@@ -943,7 +1038,8 @@ document.addEventListener('keydown', event => {
   } else if (pressed === 'f' || pressed === 'enter') {
     const targets = legalTargets(state, fireMode)
     if (targets[0]) controller.replace(attack(state, targets[0].id, fireMode))
-  } else if (pressed === 't') controller.end()
+  } else if (pressed === 'o') controller.replace(setOverwatch(state))
+  else if (pressed === 't') controller.end()
   else if (pressed === 'r') restartCampaign()
   else return
   event.preventDefault()

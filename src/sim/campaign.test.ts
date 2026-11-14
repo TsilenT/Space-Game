@@ -9,9 +9,11 @@ import {
   continueEncounter,
   createCampaign,
   declineEncounter,
+  destinationFuelCost,
   hireMercenary,
   leaveStarbase,
   missionFor,
+  repairAtStarbase,
   resolveEncounter,
   resolveMission,
   sellSalvage,
@@ -24,8 +26,8 @@ import {
   type StarbaseEncounter,
 } from './campaign'
 import { jumpTargets, systemById } from './galaxy'
-import { createGame, type GameState, type MissionResolution } from './game'
-import { BOARDING_MISSION, CIVILIAN_RESCUE_MISSION, DISTRESS_TRAP_MISSION, MOON_BASE_MISSION, PIRATE_RESCUE_MISSION } from './map'
+import { createGame, move, selectUnit, type GameState, type MissionResolution } from './game'
+import { BOARDING_MISSION, CIVILIAN_RESCUE_MISSION, CORE_SABOTAGE_MISSION, DISTRESS_TRAP_MISSION, MOON_BASE_MISSION, PIRATE_RESCUE_MISSION } from './map'
 
 // Encounters roll off a system's eventSeed, fixed at galaxy generation. To pin
 // outcomes without hunting whole galaxies, arrive() rides a crafted offer on
@@ -61,6 +63,18 @@ function completedMission(
 function encounter<T extends CampaignEncounter>(state: CampaignState, kind: T['kind']): T {
   expect(state.encounter?.kind).toBe(kind)
   return state.encounter as T
+}
+
+function routeToCore(changes: Partial<CampaignState> = {}): CampaignState {
+  const route = { ...createCampaign(37), ...changes }
+  const gateId = route.galaxy.adjacency[route.galaxy.coreId][0]
+  const core = systemById(route.galaxy, route.galaxy.coreId)
+  return {
+    ...route,
+    currentSystemId: gateId,
+    visitedSystemIds: [route.galaxy.startId, gateId],
+    offers: [{ id: core.id, kind: core.kind, name: core.name, eventSeed: core.eventSeed }],
+  }
 }
 
 describe('galaxy navigation', () => {
@@ -113,21 +127,17 @@ describe('galaxy navigation', () => {
     }
   })
 
-  it('wins the campaign on arrival at the galactic core', () => {
-    const route = createCampaign(37)
-    const gateId = route.galaxy.adjacency[route.galaxy.coreId][0]
-    const core = systemById(route.galaxy, route.galaxy.coreId)
-    const staged: CampaignState = {
-      ...route,
-      currentSystemId: gateId,
-      visitedSystemIds: [route.galaxy.startId, gateId],
-      offers: [{ id: core.id, kind: core.kind, name: core.name, eventSeed: core.eventSeed }],
-    }
-    const won = chooseDestination(staged, core.id)
-    expect(won).toMatchObject({ phase: 'victory', fuel: 3, currentSystemId: core.id })
-    expect(won.encounter).toBeUndefined()
-    expect(won.visitedSystemIds).toContain(core.id)
-    expect(chooseDestination(won, core.id)).toBe(won)
+  it('opens the Core mission even with the last unit of fuel and prevents bypassing it', () => {
+    const route = routeToCore({ fuel: 1 })
+    const coreId = route.galaxy.coreId
+    const arrived = chooseDestination(route, coreId)
+    expect(arrived).toMatchObject({ phase: 'encounter', fuel: 0, currentSystemId: coreId, encounter: { kind: 'core', outcome: 'beacon' } })
+    expect(arrived.visitedSystemIds).toContain(coreId)
+    expect(chooseDestination(arrived, coreId)).toBe(arrived)
+    expect(declineEncounter(arrived)).toBe(arrived)
+    expect(resolveEncounter(arrived)).toBe(arrived)
+    expect(continueEncounter(arrived)).toBe(arrived)
+    expect(beginMission(arrived)).toMatchObject({ phase: 'mission', activeMission: { kind: 'core-sabotage' } })
   })
 
   it('keeps encounter kinds deterministic for a fixed event seed', () => {
@@ -138,6 +148,100 @@ describe('galaxy navigation', () => {
     expect(encounter<StarbaseEncounter>(arrive(11, 'starbase'), 'starbase').mercenary).toBeDefined()
     expect(encounter(arrive(1, 'abandoned-moon'), 'abandoned-moon')).toMatchObject({ outcome: 'salvage' })
     expect(encounter(arrive(811, 'distress'), 'distress')).toMatchObject({ outcome: 'rescue' })
+  })
+})
+
+describe('the Galactic Core finale', () => {
+  it('deploys the persistent crew and wins only after disabling the beacon and extracting', () => {
+    const route = routeToCore({ fuel: 1, weaponDamage: 4 })
+    const prepared = {
+      ...route,
+      crew: route.crew.map(crew => crew.id === 'ada' ? { ...crew, hp: 5, accuracy: 61 } : crew),
+    }
+    const campaign = beginMission(chooseDestination(prepared, route.galaxy.coreId))
+    const template = missionFor(campaign)
+    expect(template.crewDamage).toBe(4)
+    expect(template.units.find(unit => unit.id === 'ada')).toMatchObject({ hp: 5, accuracy: 61 })
+
+    const game = createGame(template)
+    const objective = game.objective
+    if (objective.kind !== 'sabotage') throw new Error('Expected sabotage objective.')
+    const staged = {
+      ...game,
+      units: game.units.map(unit => {
+        if (unit.id === 'ada') return { ...unit, x: objective.beacon.x - 1, y: objective.beacon.y }
+        if (unit.id === 'milo') return { ...unit, x: objective.extraction.x - 1, y: objective.extraction.y }
+        return unit
+      }),
+    }
+    const disabled = move(staged, objective.beacon.x, objective.beacon.y)
+    expect(disabled).toMatchObject({ status: 'playing', beaconDisabled: true })
+    expect(resolveMission(campaign, disabled)).toBe(campaign)
+    const extracted = move(selectUnit(disabled, 'milo'), objective.extraction.x, objective.extraction.y)
+    const victory = resolveMission(campaign, extracted)
+    expect(victory).toMatchObject({
+      phase: 'victory',
+      fuel: 0,
+      missionReport: { outcome: 'victory', reason: 'extracted', objective: CORE_SABOTAGE_MISSION.objective.label },
+    })
+    expect(victory.missionReport?.crew.find(crew => crew.id === 'ada')).toMatchObject({ hpBefore: 5, hpAfter: 5, status: 'wounded' })
+    expect(resolveMission(victory, extracted)).toBe(victory)
+  })
+
+  it('reports a campaign loss when the Core boarding team is wiped out', () => {
+    const route = routeToCore()
+    const campaign = beginMission(chooseDestination(route, route.galaxy.coreId))
+    const completed = completedMission(
+      campaign,
+      'defeat',
+      Object.fromEntries(campaign.crew.map(crew => [crew.id, 0])),
+    )
+    const defeat = resolveMission(campaign, completed)
+    expect(defeat).toMatchObject({ phase: 'lost', missionReport: { outcome: 'defeat', reason: 'crew-lost' } })
+    expect(defeat.missionReport?.crew.every(crew => crew.status === 'killed')).toBe(true)
+  })
+})
+
+describe('persistent ship systems', () => {
+  it('charges damaged engines one extra fuel for lateral jumps and rejects jumps the ship cannot afford', () => {
+    const arrived = arrive(1456, 'abandoned-moon')
+    const resolved = resolveEncounter(arrived)
+    expect(resolved.systems).toEqual({ medbay: 'operational', engines: 'damaged' })
+    const route = continueEncounter(resolved)
+    const here = systemById(route.galaxy, route.currentSystemId)
+    const lateral = route.offers.find(offer => systemById(route.galaxy, offer.id).ring === here.ring)!
+    const inward = route.offers.find(offer => systemById(route.galaxy, offer.id).ring < here.ring)!
+    expect(destinationFuelCost(route, lateral)).toBe(2)
+    expect(chooseDestination(route, lateral.id).fuel).toBe(route.fuel - 2)
+    const lastFuel = { ...route, fuel: 1 }
+    expect(chooseDestination(lastFuel, lateral.id)).toBe(lastFuel)
+    expect(chooseDestination(lastFuel, inward.id)).toMatchObject({ phase: 'encounter', fuel: 0 })
+  })
+
+  it('makes a damaged medbay compete with wounded crew for salvage after a trap', () => {
+    const mission = beginMission(arrive(1456, 'distress'))
+    const debrief = resolveMission(mission, completedMission(mission, 'victory', { ada: 4 }))
+    expect(debrief).toMatchObject({ phase: 'debrief', systems: { medbay: 'damaged' }, missionReport: { damagedSystem: 'medbay' } })
+
+    const triaged = chooseRecovery(debrief, 'crew')
+    expect(triaged.crew.find(crew => crew.id === 'ada')?.hp).toBe(5)
+    expect(triaged.systems.medbay).toBe('damaged')
+
+    const repaired = chooseRecovery(debrief, 'medbay')
+    expect(repaired).toMatchObject({ phase: 'route', salvage: debrief.salvage - 2, systems: { medbay: 'operational' } })
+    expect(repaired.crew.find(crew => crew.id === 'ada')?.hp).toBe(4)
+    expect(chooseRecovery(repaired, 'crew')).toBe(repaired)
+  })
+
+  it('lets a starbase workshop repair a damaged system once and keep trading', () => {
+    const damaged = { medbay: 'operational', engines: 'damaged' } as const
+    const arrived = arrive(11, 'starbase', { systems: damaged, salvage: 2 })
+    expect(repairAtStarbase({ ...arrived, salvage: 1 }, 'engines').systems).toBe(damaged)
+    const repaired = repairAtStarbase(arrived, 'engines')
+    expect(repaired).toMatchObject({ phase: 'encounter', salvage: 0, systems: { engines: 'operational' } })
+    expect(repaired.encounter).toBe(arrived.encounter)
+    expect(repairAtStarbase(repaired, 'engines')).toBe(repaired)
+    expect(buyFuel(repaired).fuel).toBe(repaired.fuel + 1)
   })
 })
 

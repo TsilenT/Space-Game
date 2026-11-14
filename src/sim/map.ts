@@ -97,6 +97,12 @@ export type TacticalObjective =
     readonly targetName: string
     readonly deadlineTurn: number
   }
+  | {
+    readonly kind: 'sabotage'
+    readonly label: string
+    readonly beacon: Point
+    readonly extraction: Point
+  }
 
 export interface TacticalMission {
   readonly id: string
@@ -576,4 +582,92 @@ export const MOON_BASE_MISSION: TacticalMission = {
   ],
 }
 
-export const TACTICAL_MISSIONS = [BOARDING_MISSION, PIRATE_RESCUE_MISSION, CIVILIAN_RESCUE_MISSION, DISTRESS_TRAP_MISSION, MOON_BASE_MISSION] as const
+const CORE_CREW_SPAWNS = [
+  { x: 5, y: 13 },
+  { x: 5, y: 12 },
+  { x: 5, y: 14 },
+  { x: 6, y: 13 },
+  { x: 6, y: 12 },
+  { x: 6, y: 14 },
+]
+
+export const CORE_SABOTAGE_MISSION: TacticalMission = {
+  id: 'galactic-core-sabotage',
+  objective: {
+    kind: 'sabotage',
+    label: 'Disable the beacon, then reach extraction',
+    beacon: { x: 31, y: 10 },
+    extraction: { x: 4, y: 14 },
+  },
+  visionRange: 18,
+  map: defineTacticalMap({
+    rows: [
+      '####################################',
+      '####################################',
+      '####################################',
+      '####################################',
+      '##########MMMMMMMMMMMMMMM##CCCCC####',
+      '####DDDDDDMMMMMMmMMMMMMMMCCCCCCCCC##',
+      '####DDDDDDMMMMMMmMMMMMMMMCCCCCCCCC##',
+      '##DDDDDDDDMMMMMMMMMMMmMMMCCCCCCCCC##',
+      '##DDDDDDDDMMMMMMMMMMMMMMMCCccCCCCCC#',
+      '##DDDDDDdDGGGGGGGGGGGGGGGCCCCCCCCCC#',
+      '##DDDDDDDDGGGGggGGGGGGGGGCCCCCCCCCC#',
+      '##DDDDDDDDGGGGGGGGGGGGgGGCCCCCCCCCC#',
+      '##DDDDDDDDGGGGGGGGtGGGGGGCCCCCCCcCC#',
+      '##DDDDDDDDGGGGGGGGtGGGGGGCCCCCCCCCC#',
+      '##DDDDDDDDGGGGGGGGtGGGGGGCCCCCCCCCC#',
+      '##DDDDDDDDGGGGGGGGGGGGGGGCccCCCCCCC#',
+      '##DDDDDDdDGGGGGGGGGGGGGGGCCCCCCCCC##',
+      '##DDDDDDDDGGGGGGGGGGGGGGGCCCCCCCCC##',
+      '####DDDDDD###############CCCCCCCCC##',
+      '####DDDDDD#################CCCCC####',
+      '####################################',
+      '####################################',
+      '####################################',
+      '####################################',
+    ],
+    legend: {
+      '#': space,
+      D: floor('Shuttle Dock'),
+      G: floor('Guard Gallery'),
+      M: floor('Service Passage'),
+      C: floor('Beacon Chamber'),
+      d: structure('Shuttle Dock', STRUCTURE_KINDS.displayBank),
+      g: structure('Guard Gallery', STRUCTURE_KINDS.storageUnit),
+      t: structure('Guard Gallery', STRUCTURE_KINDS.alienGrowth),
+      m: structure('Service Passage', STRUCTURE_KINDS.storageUnit),
+      c: structure('Beacon Chamber', STRUCTURE_KINDS.controlConsole),
+    },
+    doors: [
+      { a: { x: 9, y: 7 }, b: { x: 10, y: 7 }, room: 'Service Passage' },
+      { a: { x: 9, y: 13 }, b: { x: 10, y: 13 }, room: 'Guard Gallery' },
+      { a: { x: 12, y: 8 }, b: { x: 12, y: 9 }, room: 'Guard Gallery' },
+      { a: { x: 24, y: 6 }, b: { x: 25, y: 6 }, room: 'Beacon Chamber' },
+      { a: { x: 24, y: 13 }, b: { x: 25, y: 13 }, room: 'Beacon Chamber' },
+    ],
+    rooms: [
+      { name: 'Shuttle Dock', label: { x: 3, y: 8 } },
+      { name: 'Guard Gallery', label: { x: 13, y: 16 } },
+      { name: 'Service Passage', label: { x: 17, y: 4 } },
+      { name: 'Beacon Chamber', label: { x: 28, y: 5 } },
+    ],
+  }),
+  crewSpawns: CORE_CREW_SPAWNS,
+  units: [
+    ...crewAt(CORE_CREW_SPAWNS),
+    { id: 'core-1', name: 'Signal Hound', role: 'Core sentry', team: 'enemy', x: 15, y: 12, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'core-2', name: 'Glass Keeper', role: 'Core sentry', team: 'enemy', x: 22, y: 14, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'core-3', name: 'Beacon Guard', role: 'Core sentry', team: 'enemy', x: 28, y: 10, hp: 6, ap: BASE_TIME_UNITS, accuracy: 45 },
+    { id: 'core-4', name: 'Core Warden', role: 'Core commander', team: 'enemy', x: 30, y: 16, hp: 9, ap: BASE_TIME_UNITS, accuracy: 55 },
+  ],
+}
+
+export const TACTICAL_MISSIONS = [
+  BOARDING_MISSION,
+  PIRATE_RESCUE_MISSION,
+  CIVILIAN_RESCUE_MISSION,
+  DISTRESS_TRAP_MISSION,
+  MOON_BASE_MISSION,
+  CORE_SABOTAGE_MISSION,
+] as const

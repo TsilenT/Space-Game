@@ -3,6 +3,7 @@ import { attack, createGame, enemyTurn, move, type GameState } from './game'
 import {
   BOARDING_MISSION,
   CIVILIAN_RESCUE_MISSION,
+  CORE_SABOTAGE_MISSION,
   DISTRESS_TRAP_MISSION,
   MOON_BASE_MISSION,
   PIRATE_RESCUE_MISSION,
@@ -18,23 +19,24 @@ function withoutEnemies(mission: TacticalMission): TacticalMission {
 }
 
 describe('authored tactical mission definitions', () => {
-  it('provides five scenarios across four distinct 36x24 authored maps', () => {
+  it('provides six scenarios across five distinct 36x24 authored maps', () => {
     expect(TACTICAL_MISSIONS).toEqual([
       BOARDING_MISSION,
       PIRATE_RESCUE_MISSION,
       CIVILIAN_RESCUE_MISSION,
       DISTRESS_TRAP_MISSION,
       MOON_BASE_MISSION,
+      CORE_SABOTAGE_MISSION,
     ])
-    expect(new Set(TACTICAL_MISSIONS.map(mission => mission.id)).size).toBe(5)
-    expect(new Set(TACTICAL_MISSIONS.map(mission => mission.map))).toHaveProperty('size', 4)
+    expect(new Set(TACTICAL_MISSIONS.map(mission => mission.id)).size).toBe(6)
+    expect(new Set(TACTICAL_MISSIONS.map(mission => mission.map))).toHaveProperty('size', 5)
     for (const mission of TACTICAL_MISSIONS) {
       expect(mission.map).toMatchObject({ width: 36, height: 24 })
       expect(mission.crewSpawns).toHaveLength(6)
     }
   })
 
-  it('places units, crew spawns, and rescue targets on valid nonoverlapping cells', () => {
+  it('places units, crew spawns, and objective markers on valid nonoverlapping cells', () => {
     for (const mission of TACTICAL_MISSIONS) {
       const unitKeys = mission.units.map(key)
       const crewSpawnKeys = mission.crewSpawns.map(key)
@@ -49,11 +51,15 @@ describe('authored tactical mission definitions', () => {
       const crew = mission.units.filter(unit => unit.team === 'crew')
       expect(crew.map(key)).toEqual(crewSpawnKeys.slice(0, crew.length))
 
-      if (mission.objective.kind === 'rescue') {
-        const targetKey = key(mission.objective.target)
-        expect(isWalkable(mission.map, mission.objective.target)).toBe(true)
-        expect(unitKeys).not.toContain(targetKey)
-        expect(crewSpawnKeys).not.toContain(targetKey)
+      const objective = mission.objective
+      const markers = objective.kind === 'rescue'
+        ? [objective.target]
+        : objective.kind === 'sabotage' ? [objective.beacon, objective.extraction] : []
+      expect(new Set(markers.map(key)).size).toBe(markers.length)
+      for (const marker of markers) {
+        expect(isWalkable(mission.map, marker)).toBe(true)
+        expect(unitKeys).not.toContain(key(marker))
+        expect(crewSpawnKeys).not.toContain(key(marker))
       }
     }
   })
@@ -108,7 +114,7 @@ describe('authored tactical mission definitions', () => {
 
   it('defines every door as an edge between two walkable cells, never occupying a cell', () => {
     const doorCounts = TACTICAL_MISSIONS.map(mission => mission.map.doors.length)
-    expect(doorCounts).toEqual([6, 6, 4, 5, 4])
+    expect(doorCounts).toEqual([6, 6, 4, 5, 4, 5])
     for (const mission of TACTICAL_MISSIONS) {
       for (const door of mission.map.doors) {
         expect(Math.abs(door.a.x - door.b.x) + Math.abs(door.a.y - door.b.y)).toBe(1)
@@ -118,7 +124,7 @@ describe('authored tactical mission definitions', () => {
     }
   })
 
-  it('defines the courier rescue deadline and every combat scenario as elimination', () => {
+  it('defines distinct objectives for the courier rescue and Core finale', () => {
     expect(BOARDING_MISSION.objective.kind).toBe('eliminate')
     expect(PIRATE_RESCUE_MISSION.objective.kind).toBe('eliminate')
     expect(DISTRESS_TRAP_MISSION.objective.kind).toBe('eliminate')
@@ -128,6 +134,7 @@ describe('authored tactical mission definitions', () => {
       target: { x: 31, y: 4 },
       deadlineTurn: 8,
     })
+    expect(CORE_SABOTAGE_MISSION.objective.kind).toBe('sabotage')
   })
 })
 
