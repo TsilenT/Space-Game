@@ -51,7 +51,7 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Every non-core system is one of the existing encounter kinds — distress call, starbase, or abandoned moon — with its event seed fixed at generation, so an encounter's outcome is decided the moment the galaxy exists.
 - Jumps go only to directly connected systems, and only laterally along the current ring or inward toward the core — never back outward, and never to a visited system. Because every system keeps at least one inward link and ring position never increases along a route, the ship can always reach the core and can never strand itself. This is the chosen answer to the dead-end question: generation and the movement rule prevent dead ends by construction.
 - The player sees the mission type of every system adjacent to anywhere they have been; all other systems appear as uncharted positions on the map.
-- Reaching the Galactic Core wins the run with a victory screen. The authored final battle at the core is deliberately deferred to a later slice.
+- Reaching the Galactic Core originally ended the run at arrival. The Core finale below replaces that rule.
 - The navigation screen renders the galaxy as a clickable SVG map with the reachable systems repeated as accessible route cards; visited systems stay dimmed as a route history.
 
 ### Fire modes, accuracy, and cover — July 16, 2026
@@ -61,7 +61,7 @@ This choice keeps a four-person prototype readable while creating reusable found
 - Crates are a new map tile: they block movement but not sight, and grant the cover penalty. Each authored map carries a few.
 - Shots resolve against a deterministic seeded RNG carried in the mission state, so a run remains reproducible from its campaign seed.
 - Soldiers improve by shooting: each landed hit banks +2 accuracy at mission end, capped at +8 per mission and a 90 accuracy ceiling; the dead train nothing. Starting crew accuracy is role-flavored (Marine 55, Scout 60, Engineer/Medic 45); recruits roll 40–60 seeded.
-- Enemies fire the same accuracy-rolled snap shots, so cover protects crew symmetrically, and they never fire from beyond vision range — any shooter that can hit a crew member is visible to that crew member in return. Crew may still take squad-sight shots at targets spotted by a teammate. Enemy fire modes beyond snap, ammunition, and reaction fire remain deferred.
+- Enemies fire accuracy-rolled snap shots and can only target a crew member within vision range. Crew can shoot at targets spotted by a teammate if the shooter has a clear line of fire. Enemy fire modes beyond snap and ammunition remain deferred.
 
 ### Projectiles, stray fire, and friendly fire — July 17, 2026
 
@@ -115,6 +115,12 @@ This choice keeps a four-person prototype readable while creating reusable found
 - The player can deliberately fire on any wall edge with the standard ballistics (to-hit roll, misses stray). Bulkheads have 12 hit points behind a flat armour of 5 — every current rifle round bounces off ("the plating holds") — so breaching walls awaits heavier weapons. A breached bulkhead opens sight and passage like a doorway. Hull walls can be shot but never take a scratch.
 - Deferred: weapons that beat bulkhead armour (breaching charges, heavy plasma), venting atmosphere through hull breaches, and enemies exploiting breaches tactically.
 
+### Galactic Core finale and ship systems
+
+- Arrival at the Core starts a boarding encounter even if the last jump uses the final fuel. The guard gallery is the direct route and the service passage offers a flank. Move onto the beacon tile to disable it, then onto the shuttle tile with any surviving crew member to extract the team. Campaign victory requires successful extraction.
+- The moon amoeba damages the engines, increasing same-ring jumps to 2 fuel. Inward jumps still cost 1. Surviving a distress trap damages the medbay, reducing triage from 2 HP to 1 HP per wounded survivor. A system repair costs 2 salvage at a starbase or uses the single post-mission recovery choice.
+- A crew member can spend 4 time units on a snap reaction during the enemy phase. A hostile must move or open a door into personal vision with a clear firing lane. Each armed crew member fires at most once per enemy phase. Direct shots check intervening units and standing cover while preserving the hit penalty for cover adjacent to the target.
+
 ## Open creative questions
 
 1. Should ship-to-ship combat be real-time with pause, turn-based, or abstracted?
@@ -123,5 +129,4 @@ This choice keeps a four-person prototype readable while creating reusable found
 4. How lethal should the later full campaign be beyond the demo's current tuning?
 5. Should the tone lean serious, comedic, or deliberately mixed?
 6. When should the authored mission modules become a constrained procedural generator?
-7. Doors, fire modes, and cover are now in; which tactical system should follow next: overwatch/reaction fire, ammunition, or environmental hazards?
-8. What is the authored final battle at the Galactic Core, and what makes it mechanically distinct from a standard boarding?
+7. Should ammunition or environmental hazards follow overwatch?

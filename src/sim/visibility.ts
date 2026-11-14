@@ -6,13 +6,15 @@ const NO_EDGES: ReadonlySet<DoorKey> = new Set()
  * Line of sight across the cell grid. `closedEdges` holds the door edges that
  * are currently shut: sight cannot cross a closed edge, and a diagonal step
  * is blocked when both ways around its corner are sealed by walls or closed
- * doors.
+ * doors. A caller tracing gunfire can supply additional blocking cells without
+ * changing what units can see.
  */
-export function hasLineOfSight(map: TacticalMap, from: Point, to: Point, closedEdges: ReadonlySet<DoorKey> = NO_EDGES): boolean {
+export function hasLineOfSight(map: TacticalMap, from: Point, to: Point, closedEdges: ReadonlySet<DoorKey> = NO_EDGES, blocks?: (point: Point) => boolean): boolean {
   if (!cellAt(map, from) || !cellAt(map, to)) return false
   if (from.x === to.x && from.y === to.y) return true
 
   const sealed = (a: Point, b: Point): boolean => closedEdges.has(doorKey(a, b))
+  const blocked = (point: Point): boolean => isOpaque(map, point) || blocks?.(point) === true
   const deltaX = to.x - from.x
   const deltaY = to.y - from.y
   const stepsX = Math.abs(deltaX)
@@ -33,8 +35,8 @@ export function hasLineOfSight(map: TacticalMap, from: Point, to: Point, closedE
       const horizontalNeighbor = { x: x + directionX, y }
       const verticalNeighbor = { x, y: y + directionY }
       const target = { x: x + directionX, y: y + directionY }
-      const throughHorizontal = !isOpaque(map, horizontalNeighbor) && !sealed(here, horizontalNeighbor) && !sealed(horizontalNeighbor, target)
-      const throughVertical = !isOpaque(map, verticalNeighbor) && !sealed(here, verticalNeighbor) && !sealed(verticalNeighbor, target)
+      const throughHorizontal = !blocked(horizontalNeighbor) && !sealed(here, horizontalNeighbor) && !sealed(horizontalNeighbor, target)
+      const throughVertical = !blocked(verticalNeighbor) && !sealed(here, verticalNeighbor) && !sealed(verticalNeighbor, target)
       if (!throughHorizontal && !throughVertical) return false
       x += directionX
       y += directionY
@@ -51,7 +53,7 @@ export function hasLineOfSight(map: TacticalMap, from: Point, to: Point, closedE
     }
 
     if (x === to.x && y === to.y) return true
-    if (isOpaque(map, { x, y })) return false
+    if (blocked({ x, y })) return false
   }
 
   return true

@@ -24,7 +24,7 @@ export { doorKey } from './map'
 export type Phase = 'player' | 'enemy'
 export type Status = 'playing' | 'victory' | 'defeat'
 export type MissionResolution =
-  | { readonly result: 'victory'; readonly reason: 'hostiles-eliminated' | 'survivor-rescued' }
+  | { readonly result: 'victory'; readonly reason: 'hostiles-eliminated' | 'survivor-rescued' | 'extracted' }
   | { readonly result: 'defeat'; readonly reason: 'crew-lost' | 'deadline-expired' }
 export type FireModeId = 'snap' | 'auto' | 'aimed'
 
@@ -62,6 +62,7 @@ export interface ShotResult {
   readonly killed: boolean
   readonly deviationDeg: number
   readonly struckObstacle: boolean
+  readonly reaction?: boolean
 }
 
 export interface GameState {
@@ -73,8 +74,10 @@ export interface GameState {
   phase: Phase
   status: Status
   resolution?: MissionResolution
+  beaconDisabled: boolean
   turn: number
   selectedId?: string
+  overwatch: readonly string[]
   explored: CellKey[]
   openDoors: DoorKey[]
   structureHp: Readonly<Record<CellKey, number>>
@@ -129,8 +132,10 @@ export function createGame(mission: TacticalMission = BOARDING_MISSION): GameSta
     visionRange: mission.visionRange,
     phase: 'player',
     status: 'playing',
+    beaconDisabled: false,
     turn: 1,
     selectedId: mission.units.find(unit => unit.team === 'crew')?.id,
+    overwatch: [],
     explored: [],
     openDoors: [],
     structureHp: Object.fromEntries(mission.map.cells.filter(cell => cell.structure).map(cell => [key(cell), cell.structure!.hp])),
@@ -223,6 +228,30 @@ export function selectUnit(state: GameState, id: string): GameState {
   return { ...state, selectedId: id }
 }
 
+export function canSetOverwatch(state: GameState): boolean {
+  const unit = state.units.find(candidate => candidate.id === state.selectedId)
+  return state.phase === 'player'
+    && state.status === 'playing'
+    && unit?.team === 'crew'
+    && alive(unit)
+    && unit.ap >= FIRE_MODES.snap.cost
+    && !state.overwatch.includes(unit.id)
+}
+
+export function setOverwatch(state: GameState): GameState {
+  if (!canSetOverwatch(state)) return state
+  const unit = state.units.find(candidate => candidate.id === state.selectedId)!
+  return {
+    ...state,
+    overwatch: [...state.overwatch, unit.id],
+    units: state.units.map(candidate => candidate.id === unit.id
+      ? { ...candidate, ap: candidate.ap - FIRE_MODES.snap.cost }
+      : candidate),
+    lastShots: [],
+    log: [`${unit.name} is watching for enemy movement.`, ...state.log].slice(0, 5),
+  }
+}
+
 export function legalMoves(state: GameState): Point[] {
   const unit = state.units.find(candidate => candidate.id === state.selectedId)
   if (!unit || state.phase !== 'player' || state.status !== 'playing' || !alive(unit)) return []
@@ -301,7 +330,7 @@ export function move(state: GameState, x: number, y: number): GameState {
     lastShots: [],
     units: state.units.map(candidate => candidate.id === unit.id ? { ...candidate, x, y, ap: candidate.ap - cost } : candidate),
     log: [`${unit.name} moved into ${roomAt(state.map, target)}.`, ...state.log].slice(0, 5),
-  }))
+  }, false, target))
 }
 
 /**
@@ -325,7 +354,7 @@ export function approachAndOpenDoor(state: GameState, door: DoorEdge): GameState
     .sort((first, second) => shortestDistance(state, unit, first, unit.id) - shortestDistance(state, unit, second, unit.id))
   if (stops.length === 0) return state
   const moved = move(state, stops[0].x, stops[0].y)
-  if (moved === state) return state
+  if (moved === state || moved.status !== 'playing') return moved
   return openDoor(moved, unit.name, door)
 }
 
@@ -335,11 +364,12 @@ function finishMission(state: GameState, resolution: MissionResolution, log: str
     status: resolution.result,
     resolution,
     selectedId: undefined,
+    overwatch: [],
     log: [log, ...state.log].slice(0, 5),
   }
 }
 
-function evaluateMission(state: GameState, roundEnded = false): GameState {
+function evaluateMission(state: GameState, roundEnded = false, movedCrewTo?: Point): GameState {
   if (state.status !== 'playing') return state
 
   const livingCrew = state.units.filter(unit => unit.team === 'crew' && alive(unit))
@@ -353,6 +383,18 @@ function evaluateMission(state: GameState, roundEnded = false): GameState {
     return enemyAlive
       ? state
       : finishMission(state, { result: 'victory', reason: 'hostiles-eliminated' }, 'All hostile contacts eliminated.')
+  }
+
+  if (objective.kind === 'sabotage') {
+    if (!movedCrewTo) return state
+    const destination = key(movedCrewTo)
+    if (state.beaconDisabled && destination === key(objective.extraction)) {
+      return finishMission(state, { result: 'victory', reason: 'extracted' }, 'Beacon disabled. The remaining crew have extracted.')
+    }
+    if (!state.beaconDisabled && destination === key(objective.beacon)) {
+      return { ...state, beaconDisabled: true, log: ['Beacon disabled. Get a crew member to extraction.', ...state.log].slice(0, 5) }
+    }
+    return state
   }
 
   const survivorReached = livingCrew.some(unit => unit.x === objective.target.x && unit.y === objective.target.y)
@@ -371,29 +413,42 @@ function evaluateMission(state: GameState, roundEnded = false): GameState {
   return state
 }
 
-function canHit(state: GameState, attacker: Unit, target: Unit): boolean {
+function isShotInRange(attacker: Unit, target: Unit): boolean {
   return alive(attacker)
     && alive(target)
     && attacker.team !== target.team
     && distance(attacker, target) <= ATTACK_RANGE
-    && hasLineOfSight(activeMap(state), attacker, target, blockedEdges(state))
 }
 
-/** True when a cover cell shields the target on its shooter-facing side. */
-function targetInCover(state: GameState, shooter: Point, target: Point): boolean {
+/** Adjacent cover on the sides of the target facing the shooter. */
+function coverShields(shooter: Point, target: Point): Point[] {
   const dx = Math.sign(shooter.x - target.x)
   const dy = Math.sign(shooter.y - target.y)
-  const shields = [
-    dx !== 0 ? { x: target.x + dx, y: target.y } : undefined,
-    dy !== 0 ? { x: target.x, y: target.y + dy } : undefined,
-  ]
-  return shields.some(cell => cell && cellAt(activeMap(state), cell)?.cover === true)
+  const shields: Point[] = []
+  if (dx !== 0) shields.push({ x: target.x + dx, y: target.y })
+  if (dy !== 0) shields.push({ x: target.x, y: target.y + dy })
+  return shields
+}
+
+function fireLaneReaches(state: GameState, shooter: Unit, target: Point, allowAdjacentCover = false): boolean {
+  const map = activeMap(state)
+  const shields = allowAdjacentCover ? coverShields(shooter, target).map(key) : []
+  const bystanders = new Set(state.units.filter(unit => alive(unit) && unit.id !== shooter.id).map(key))
+  return hasLineOfSight(map, shooter, target, blockedEdges(state), point => {
+    const cellKey = key(point)
+    return bystanders.has(cellKey) || (cellAt(map, point)?.cover === true && !shields.includes(cellKey))
+  })
+}
+
+function canHit(state: GameState, attacker: Unit, target: Unit): boolean {
+  return isShotInRange(attacker, target) && fireLaneReaches(state, attacker, target, true)
 }
 
 export function hitChance(state: GameState, attacker: Unit, target: Point, mode: FireModeId): number {
   const base = attacker.accuracy * FIRE_MODES[mode].factor
   const range = DISTANCE_PENALTY * Math.max(0, distance(attacker, target) - 1)
-  const cover = targetInCover(state, attacker, target) ? COVER_PENALTY : 0
+  const map = activeMap(state)
+  const cover = coverShields(attacker, target).some(shield => cellAt(map, shield)?.cover === true) ? COVER_PENALTY : 0
   return Math.min(MAX_CHANCE, Math.max(MIN_CHANCE, Math.round(base - range - cover)))
 }
 
@@ -417,8 +472,8 @@ interface StrayOutcome {
  * excluded: a round that already missed it streaks past. A struck structure
  * is reported so the round can chew into it.
  */
-/** True when a stray round cannot pass from one sampled cell to the next because a closed door seals the crossing. */
-function strayCrossesClosedDoor(previous: Point, next: Point, sealedEdges: ReadonlySet<DoorKey>): boolean {
+/** True when walls or shut doors seal a projectile's step. */
+function strayCrossesSealedEdge(previous: Point, next: Point, sealedEdges: ReadonlySet<DoorKey>): boolean {
   const stepX = next.x - previous.x
   const stepY = next.y - previous.y
   if (stepX !== 0 && stepY !== 0) {
@@ -429,7 +484,7 @@ function strayCrossesClosedDoor(previous: Point, next: Point, sealedEdges: Reado
   return sealedEdges.has(doorKey(previous, next))
 }
 
-function traceStray(map: TacticalMap, units: readonly Unit[], shooter: Unit, aimAt: Point, angleRad: number, maxDist: number, sealedEdges: ReadonlySet<DoorKey>): StrayOutcome {
+function traceStray(map: TacticalMap, units: readonly Unit[], structureHp: Readonly<Record<CellKey, number>>, shooter: Unit, aimAt: Point, angleRad: number, maxDist: number, sealedEdges: ReadonlySet<DoorKey>): StrayOutcome {
   const cos = Math.cos(angleRad)
   const sin = Math.sin(angleRad)
   let lastInBounds: Point = { x: shooter.x, y: shooter.y }
@@ -438,15 +493,16 @@ function traceStray(map: TacticalMap, units: readonly Unit[], shooter: Unit, aim
   for (let travelled = 0.3; travelled <= maxDist; travelled += 0.2) {
     const cell = { x: Math.round(shooter.x + cos * travelled), y: Math.round(shooter.y + sin * travelled) }
     if (cell.x === previous.x && cell.y === previous.y) continue
-    if (strayCrossesClosedDoor(previous, cell, sealedEdges)) return { impact: previous, struckObstacle: true }
+    if (strayCrossesSealedEdge(previous, cell, sealedEdges)) return { impact: previous, struckObstacle: true }
     previous = cell
     if (cell.x === shooter.x && cell.y === shooter.y) continue
 
     const mapCell = cellAt(map, cell)
     if (!mapCell) return { impact: lastInBounds, struckObstacle: true }
     lastInBounds = cell
-    if (mapCell.opaque || mapCell.cover) {
-      return { impact: cell, struckObstacle: true, structureAt: mapCell.structure && mapCell.cover ? cell : undefined }
+    const standingStructure = mapCell.structure !== undefined && (structureHp[key(cell)] ?? 0) > 0
+    if (mapCell.opaque || (mapCell.cover && (!mapCell.structure || standingStructure))) {
+      return { impact: cell, struckObstacle: true, structureAt: standingStructure ? cell : undefined }
     }
 
     const victim = units.find(unit => alive(unit) && unit.x === cell.x && unit.y === cell.y
@@ -471,7 +527,7 @@ function resolveMissedRound(map: TacticalMap, sealedEdges: ReadonlySet<DoorKey>,
   const deviationDeg = side * (BASE_DEVIATION_DEG + overshoot * DEVIATION_PER_OVERSHOOT)
   const aim = Math.atan2(aimAt.y - shooter.y, aimAt.x - shooter.x)
   const maxDist = Math.hypot(aimAt.x - shooter.x, aimAt.y - shooter.y) + STRAY_OVERSHOOT_TILES
-  const stray = traceStray(map, units, shooter, aimAt, aim + (deviationDeg * Math.PI) / 180, maxDist, sealedEdges)
+  const stray = traceStray(map, units, structureHp, shooter, aimAt, aim + (deviationDeg * Math.PI) / 180, maxDist, sealedEdges)
   const victim = stray.victimId ? units.find(unit => unit.id === stray.victimId)! : undefined
   const hp = victim ? Math.max(0, victim.hp - damage) : 0
   const structureKey = stray.structureAt ? key(stray.structureAt) : undefined
@@ -559,10 +615,15 @@ function resolveStructureRound(map: TacticalMap, sealedEdges: ReadonlySet<DoorKe
 
 export function attack(state: GameState, targetId: string, modeId: FireModeId = 'snap'): GameState {
   const attacker = state.units.find(unit => unit.id === state.selectedId)
-  const target = legalTargets(state, modeId).find(unit => unit.id === targetId)
-  if (!attacker || !target) return state
-
   const mode = FIRE_MODES[modeId]
+  if (state.phase !== 'player' || state.status !== 'playing' || attacker?.team !== 'crew' || attacker.ap < mode.cost) return state
+  const target = state.units.find(unit => unit.id === targetId)
+  if (!target || !isShotInRange(attacker, target) || !isCellVisible(state, target)) return state
+  if (!fireLaneReaches(state, attacker, target, true)) {
+    if (!hasLineOfSight(activeMap(state), attacker, target, blockedEdges(state))) return state
+    return { ...state, lastShots: [], log: [`${attacker.name}'s firing lane to ${target.name} is blocked.`, ...state.log].slice(0, 5) }
+  }
+
   const chance = hitChance(state, attacker, target, modeId)
   const damage = state.mission.crewDamage ?? DEFAULT_CREW_DAMAGE
   const map = activeMap(state)
@@ -617,17 +678,6 @@ export function attack(state: GameState, targetId: string, modeId: FireModeId = 
   }))
 }
 
-/**
- * True when a round fired straight at this point reaches it without first
- * striking a wall, a structure, cover, or a bystander in the fire lane.
- */
-function fireLaneReaches(state: GameState, shooter: Unit, point: Point): boolean {
-  const aim = Math.atan2(point.y - shooter.y, point.x - shooter.x)
-  const reach = Math.hypot(point.x - shooter.x, point.y - shooter.y)
-  const lane = traceStray(activeMap(state), state.units, shooter, point, aim, reach + 0.5, blockedEdges(state))
-  return lane.impact.x === point.x && lane.impact.y === point.y
-}
-
 /** True when the selected soldier can deliberately fire on the structure at this cell. */
 export function canTargetStructure(state: GameState, point: Point, modeId: FireModeId = 'snap'): boolean {
   const attacker = state.units.find(unit => unit.id === state.selectedId)
@@ -642,7 +692,6 @@ export function canTargetStructure(state: GameState, point: Point, modeId: FireM
     && (state.structureHp[key(point)] ?? 0) > 0
     && distance(attacker, point) <= ATTACK_RANGE
     && isCellVisible(state, point)
-    && hasLineOfSight(activeMap(state), attacker, point, blockedEdges(state))
     && fireLaneReaches(state, attacker, point)
 }
 
@@ -715,8 +764,7 @@ function wallFiringFlank(state: GameState, attacker: Unit, wall: WallEdge): Poin
     .sort((first, second) => distance(attacker, first) - distance(attacker, second))
     .find(flank => distance(attacker, flank) <= ATTACK_RANGE
       && isCellVisible(state, flank)
-      && hasLineOfSight(activeMap(state), attacker, flank, blockedEdges(state))
-      && ((flank.x === attacker.x && flank.y === attacker.y) || fireLaneReaches(state, attacker, flank)))
+      && fireLaneReaches(state, attacker, flank))
 }
 
 /** True when the selected soldier can deliberately fire on this wall edge. */
@@ -828,6 +876,7 @@ export function endTurn(state: GameState): GameState {
     phase: 'enemy',
     selectedId: undefined,
     openDoors: [],
+    lastShots: [],
     units: state.units.map(unit => unit.team === 'enemy' ? { ...unit, ap: TURN_TIME_UNITS } : unit),
     log: ['Enemy activity detected…', ...state.log].slice(0, 5),
   })
@@ -853,6 +902,40 @@ function pathDistance(state: GameState, start: Point, end: Point, ignore?: strin
   }
 
   return Number.POSITIVE_INFINITY
+}
+
+function fireOverwatch(input: GameState, targetId: string): GameState {
+  let state = input
+  const watchers = state.units
+    .filter(unit => state.overwatch.includes(unit.id))
+    .sort((a, b) => a.id.localeCompare(b.id))
+
+  for (const { id } of watchers) {
+    const target = state.units.find(unit => unit.id === targetId)!
+    if (!alive(target) || state.status !== 'playing') break
+    const watcher = state.units.find(unit => unit.id === id)!
+    if (distance(watcher, target) > state.visionRange || !canHit(state, watcher, target)) continue
+
+    const chance = hitChance(state, watcher, target, 'snap')
+    const damage = state.mission.crewDamage ?? DEFAULT_CREW_DAMAGE
+    const outcome = resolveRound(activeMap(state), blockedEdges(state), state.units, state.structureHp, state.rngState, watcher, target, chance, damage)
+    const victim = outcome.units.find(unit => unit.id === outcome.shot.hitUnitId)
+    const structure = outcome.shot.hitStructureAt && cellAt(state.map, outcome.shot.hitStructureAt)?.structure
+    const report = victim ? `hits ${victim.name} for ${damage} damage` : structure ? `hits the ${structure.name}` : `misses ${target.name}`
+    state = evaluateMission({
+      ...state,
+      rngState: outcome.rngState,
+      structureHp: outcome.structureHp,
+      overwatch: state.overwatch.filter(unitId => unitId !== watcher.id),
+      units: outcome.units.map(unit => unit.id === watcher.id && victim?.team === 'enemy' ? { ...unit, hits: unit.hits + 1 } : unit),
+      lastShots: [...state.lastShots, { ...outcome.shot, reaction: true }],
+      log: [`${watcher.name}'s overwatch ${report}.`, ...state.log].slice(0, 5),
+    })
+  }
+
+  // A reaction can briefly reveal a target across a door that closes again
+  // before the player regains control. Keep that terrain in map memory.
+  return state === input ? state : reveal(state)
 }
 
 export function enemyTurn(input: GameState): GameState {
@@ -931,7 +1014,7 @@ export function enemyTurn(input: GameState): GameState {
       }
     }
 
-    state = evaluateMission(state)
+    state = fireOverwatch(state, current.id)
     if (state.status !== 'playing') return reveal(state)
     }
   }
@@ -945,6 +1028,7 @@ export function enemyTurn(input: GameState): GameState {
     phase: 'player',
     turn: state.turn + 1,
     openDoors: [],
+    overwatch: [],
     selectedId: state.units.find(unit => unit.team === 'crew' && alive(unit))?.id,
     units: state.units.map(unit => unit.team === 'crew' && alive(unit) ? { ...unit, ap: TURN_TIME_UNITS } : unit),
   })

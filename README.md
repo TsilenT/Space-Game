@@ -13,7 +13,11 @@ npm install
 npm run dev
 ```
 
-Navigate a seeded galaxy map: 18 star systems in rings around the Galactic Core, each a distress call, starbase, or abandoned moon. You can see the mission type of every system connected to anywhere you have been, jumps only hold your ring or fall inward, and visited systems are gone for good. Seeded encounters can reveal survivors, salvage, fuel, pirates, traps, or stranger hazards; tactical missions use multiple authored layouts and include both elimination and an eight-turn rescue. Soldiers spend time units on snap, auto, or aimed shots whose hit chance depends on the shooter's skill, distance, and cover — and every hit landed trains the survivor's aim for the next fight. Crew health and death, recruits, a weapon upgrade, hull damage, credits, salvage, and fuel persist across the run — reach the core to win.
+Navigate a seeded galaxy of 18 systems. Travel along your ring or inward, then board pirate ships, rescue survivors, explore a moon base, or trade at a starbase. Every jump spends fuel, and damaged engines make same-ring detours cost more. Spend salvage on hull repairs, triage, or a damaged ship system.
+
+In battle, spend time units on movement, snap shots, auto fire, aimed shots, or overwatch. Crew injuries, deaths, recruits, and improved aim carry into later missions. At the Galactic Core, disable the relay beacon and reach the shuttle with a living crew member to win the run.
+
+Use `?seed=37` to replay the same galaxy. Broken Chorus offers the eight-turn rescue, and Nadir Cross has a moon-base assault.
 
 ## Technology
 
@@ -74,7 +78,7 @@ npm run build
 
 ## Current slice
 
-The current demo is a compact galaxy run: spend fuel jumping system to system across a seeded ring map, resolve seeded strategic events or tactical missions, bring persistent wounds and recruits home, trade at a starbase, recover, and push inward until the Galactic Core ends the run in victory. A small catalog of authored ship layouts provides controlled variety; the authored final battle at the core, procedural layout generation, deeper equipment, reaction fire, research, and broader sector simulation remain later milestones.
+The demo runs from the outer ring to an authored Core finale. The squad can approach the beacon through the guard gallery or the service passage, then use the shuttle to extract. The ship's medbay and engines can take lasting damage, and starbases and post-mission workshops repair them. Procedural layouts, a playable player-ship interior, deeper equipment, and research remain future milestones.
 
 ## License
 

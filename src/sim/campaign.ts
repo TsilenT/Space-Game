@@ -2,6 +2,7 @@ import type { GameState } from './game'
 import {
   generateGalaxy,
   jumpTargets,
+  systemById,
   type Galaxy,
   type SystemKind,
 } from './galaxy'
@@ -9,20 +10,22 @@ import {
   BASE_TIME_UNITS,
   BOARDING_MISSION,
   CIVILIAN_RESCUE_MISSION,
+  CORE_SABOTAGE_MISSION,
   DISTRESS_TRAP_MISSION,
   MOON_BASE_MISSION,
   PIRATE_RESCUE_MISSION,
   type TacticalMission,
 } from './map'
+import { createShipSystems, damageShipSystem, jumpFuelCost, medbayHealing, repairShipSystem, type ShipSystem, type ShipSystems } from './ship'
 
 export type CampaignPhase = 'route' | 'encounter' | 'mission' | 'debrief' | 'victory' | 'lost'
 export type DestinationKind = Exclude<SystemKind, 'core'>
 export type { Galaxy, StarSystem, SystemKind } from './galaxy'
-export type RecoveryChoice = 'crew' | 'hull' | 'bank'
+export type RecoveryChoice = 'crew' | 'hull' | 'bank' | ShipSystem
 export type CrewMissionStatus = 'ready' | 'wounded' | 'killed'
 export type MoonOutcome = 'salvage' | 'survivor' | 'fuel' | 'amoeba' | 'base'
 export type DistressOutcome = 'survivor' | 'pirates' | 'rescue' | 'trap'
-export type MissionKind = 'pirate-rescue' | 'timed-rescue' | 'distress-trap' | 'moon-base'
+export type MissionKind = 'pirate-rescue' | 'timed-rescue' | 'distress-trap' | 'moon-base' | 'core-sabotage'
 
 export interface CampaignCrew {
   readonly id: string
@@ -77,7 +80,12 @@ export interface DistressEncounter extends EncounterBase {
   readonly recruit?: CampaignRecruit
 }
 
-export type CampaignEncounter = StarbaseEncounter | MoonEncounter | DistressEncounter
+export interface CoreEncounter extends EncounterBase {
+  readonly kind: 'core'
+  readonly outcome: 'beacon'
+}
+
+export type CampaignEncounter = StarbaseEncounter | MoonEncounter | DistressEncounter | CoreEncounter
 
 export interface MissionRewards {
   readonly salvage: number
@@ -91,6 +99,7 @@ export interface MissionContext {
   readonly rewards: MissionRewards
   readonly successHullDamage: number
   readonly timeoutHullDamage: number
+  readonly damagedSystem?: ShipSystem
   readonly recruit?: CampaignRecruit
 }
 
@@ -115,6 +124,7 @@ export interface MissionReport {
   readonly creditsGained: number
   readonly fuelGained: number
   readonly hullDamage: number
+  readonly damagedSystem?: ShipSystem
   readonly crew: readonly CrewMissionResult[]
 }
 
@@ -131,6 +141,7 @@ export interface CampaignState {
   readonly salvage: number
   readonly hull: number
   readonly maxHull: number
+  readonly systems: ShipSystems
   readonly weaponDamage: number
   readonly crew: readonly CampaignCrew[]
   readonly offers: readonly DestinationOffer[]
@@ -143,6 +154,7 @@ export const DEFAULT_CAMPAIGN_SEED = 37
 
 export const CAMPAIGN_TUNING = {
   startingFuel: 4,
+  jumpFuelCost: 1,
   maxFuel: 6,
   startingCredits: 10,
   startingSalvage: 1,
@@ -289,6 +301,14 @@ function distressEncounter(offer: DestinationOffer): DistressEncounter {
 function encounterFor(offer: DestinationOffer): CampaignEncounter {
   if (offer.kind === 'starbase') return starbaseEncounter(offer)
   if (offer.kind === 'abandoned-moon') return moonEncounter(offer)
+  if (offer.kind === 'core') return {
+    id: `event-${offer.id}`,
+    offerId: offer.id,
+    kind: 'core',
+    name: offer.name,
+    outcome: 'beacon',
+    resolved: false,
+  }
   return distressEncounter(offer)
 }
 
@@ -332,6 +352,7 @@ export function createCampaign(seed = DEFAULT_CAMPAIGN_SEED): CampaignState {
     salvage: CAMPAIGN_TUNING.startingSalvage,
     hull: CAMPAIGN_TUNING.startingHull,
     maxHull: CAMPAIGN_TUNING.maxHull,
+    systems: createShipSystems(),
     weaponDamage: CAMPAIGN_TUNING.baseWeaponDamage,
     crew: BOARDING_MISSION.units
       .filter(unit => unit.team === 'crew')
@@ -347,33 +368,38 @@ export function createCampaign(seed = DEFAULT_CAMPAIGN_SEED): CampaignState {
   }
 }
 
+export function destinationFuelCost(state: CampaignState, offer: DestinationOffer): number {
+  const current = systemById(state.galaxy, state.currentSystemId)
+  const destination = systemById(state.galaxy, offer.id)
+  return jumpFuelCost(state.systems, current.ring, destination.ring, CAMPAIGN_TUNING.jumpFuelCost)
+}
+
 export function chooseDestination(state: CampaignState, offerId: string): CampaignState {
   if (state.phase !== 'route' || state.fuel <= 0) return state
   const offer = state.offers.find(candidate => candidate.id === offerId)
   if (!offer) return state
+  const cost = destinationFuelCost(state, offer)
+  if (state.fuel < cost) return state
   const arrived = {
     ...state,
-    fuel: state.fuel - 1,
+    fuel: state.fuel - cost,
     currentSystemId: offer.id,
     visitedSystemIds: [...state.visitedSystemIds, offer.id],
     offers: [],
     activeMission: undefined,
     missionReport: undefined,
   }
-  if (offer.kind === 'core') {
-    return { ...arrived, phase: 'victory', encounter: undefined }
-  }
   return { ...arrived, phase: 'encounter', encounter: encounterFor(offer) }
 }
 
 export function declineEncounter(state: CampaignState): CampaignState {
-  if (state.phase !== 'encounter' || !state.encounter || state.encounter.resolved) return state
+  if (state.phase !== 'encounter' || !state.encounter || state.encounter.kind === 'core' || state.encounter.resolved) return state
   return withNextRoute(state)
 }
 
 export function resolveEncounter(state: CampaignState): CampaignState {
   const encounter = state.encounter
-  if (state.phase !== 'encounter' || !encounter || encounter.resolved || encounter.kind === 'starbase') return state
+  if (state.phase !== 'encounter' || !encounter || encounter.resolved || encounter.kind === 'starbase' || encounter.kind === 'core') return state
   if (encounter.kind === 'distress' && encounter.outcome !== 'survivor') return state
   // A discovered base is a boarding decision, not a survey roll.
   if (encounter.kind === 'abandoned-moon' && encounter.outcome === 'base') return state
@@ -386,6 +412,7 @@ export function resolveEncounter(state: CampaignState): CampaignState {
       salvage: state.salvage + encounter.salvage,
       fuel: Math.min(state.maxFuel, state.fuel + encounter.fuel),
       hull: Math.max(0, state.hull - encounter.hullDamage),
+      systems: encounter.outcome === 'amoeba' ? damageShipSystem(state.systems, 'engines') : state.systems,
       crew: addRecruit(state.crew, encounter.recruit),
     }
     return resolved.hull <= 0 ? { ...resolved, phase: 'lost' } : resolved
@@ -406,6 +433,11 @@ export function continueEncounter(state: CampaignState): CampaignState {
 export function leaveStarbase(state: CampaignState): CampaignState {
   if (state.phase !== 'encounter' || state.encounter?.kind !== 'starbase') return state
   return withNextRoute(state)
+}
+
+export function repairAtStarbase(state: CampaignState, system: ShipSystem): CampaignState {
+  if (state.phase !== 'encounter' || state.encounter?.kind !== 'starbase') return state
+  return repairSystem(state, system)
 }
 
 export function buyFuel(state: CampaignState, amount = 1): CampaignState {
@@ -469,7 +501,16 @@ export function hireMercenary(state: CampaignState): CampaignState {
   }
 }
 
-function missionContext(encounter: DistressEncounter | MoonEncounter): MissionContext | undefined {
+function missionContext(encounter: DistressEncounter | MoonEncounter | CoreEncounter): MissionContext | undefined {
+  if (encounter.kind === 'core') {
+    return {
+      kind: 'core-sabotage',
+      templateId: CORE_SABOTAGE_MISSION.id,
+      rewards: { salvage: 0, credits: 0, fuel: 0 },
+      successHullDamage: 0,
+      timeoutHullDamage: 0,
+    }
+  }
   if (encounter.kind === 'abandoned-moon') {
     if (encounter.outcome !== 'base') return undefined
     return {
@@ -507,6 +548,7 @@ function missionContext(encounter: DistressEncounter | MoonEncounter): MissionCo
       rewards: { salvage: 3, credits: 2, fuel: 0 },
       successHullDamage: 8,
       timeoutHullDamage: 0,
+      damagedSystem: 'medbay',
     }
   }
   return undefined
@@ -521,6 +563,7 @@ export function beginMission(state: CampaignState): CampaignState {
 }
 
 function templateFor(context: MissionContext): TacticalMission {
+  if (context.kind === 'core-sabotage') return CORE_SABOTAGE_MISSION
   if (context.kind === 'timed-rescue') return CIVILIAN_RESCUE_MISSION
   if (context.kind === 'distress-trap') return DISTRESS_TRAP_MISSION
   if (context.kind === 'moon-base') return MOON_BASE_MISSION
@@ -603,11 +646,14 @@ export function resolveMission(state: CampaignState, completedMission: GameState
     || completedMission.mission.id !== context.templateId
   ) return state
 
+  const finale = context.kind === 'core-sabotage'
   const victory = completedMission.status === 'victory'
+  if (finale && victory && completedMission.resolution?.reason !== 'extracted') return state
   const timedOut = !victory && completedMission.resolution?.reason === 'deadline-expired'
   const crewAfterMission = missionCrew(state, completedMission)
   const hullDamage = victory ? context.successHullDamage : timedOut ? context.timeoutHullDamage : 0
   const rewards = victory ? context.rewards : { salvage: 0, credits: 0, fuel: 0 }
+  const damagedSystem = victory ? context.damagedSystem : undefined
   const report: MissionReport = {
     outcome: victory ? 'victory' : 'defeat',
     reason: completedMission.resolution?.reason,
@@ -617,6 +663,7 @@ export function resolveMission(state: CampaignState, completedMission: GameState
     creditsGained: rewards.credits,
     fuelGained: rewards.fuel,
     hullDamage,
+    damagedSystem,
     crew: crewReport(state, crewAfterMission, completedMission),
   }
   const resolved: CampaignState = {
@@ -626,10 +673,22 @@ export function resolveMission(state: CampaignState, completedMission: GameState
     credits: state.credits + rewards.credits,
     fuel: Math.min(state.maxFuel, state.fuel + rewards.fuel),
     hull: Math.max(0, state.hull - hullDamage),
+    systems: damagedSystem ? damageShipSystem(state.systems, damagedSystem) : state.systems,
     missionReport: report,
   }
-  if (!victory || resolved.hull <= 0 || !hasLivingCrew(resolved)) return { ...resolved, phase: 'lost' }
+  const defeated = !victory || resolved.hull <= 0 || !hasLivingCrew(resolved)
+  if (finale) return { ...resolved, phase: defeated ? 'lost' : 'victory', encounter: undefined, activeMission: undefined }
+  if (defeated) return { ...resolved, phase: 'lost' }
   return { ...resolved, phase: 'debrief' }
+}
+
+function repairSystem(state: CampaignState, system: ShipSystem): CampaignState {
+  if (state.salvage < CAMPAIGN_TUNING.repairCost || state.systems[system] !== 'damaged') return state
+  return {
+    ...state,
+    salvage: state.salvage - CAMPAIGN_TUNING.repairCost,
+    systems: repairShipSystem(state.systems, system),
+  }
 }
 
 export function chooseRecovery(state: CampaignState, choice: RecoveryChoice): CampaignState {
@@ -637,13 +696,19 @@ export function chooseRecovery(state: CampaignState, choice: RecoveryChoice): Ca
   if (choice === 'bank') return withNextRoute(state)
   if (state.salvage < CAMPAIGN_TUNING.repairCost) return state
 
+  if (choice === 'medbay' || choice === 'engines') {
+    const repaired = repairSystem(state, choice)
+    return repaired === state ? state : withNextRoute(repaired)
+  }
+
   if (choice === 'crew') {
     if (!state.crew.some(crew => crew.hp > 0 && crew.hp < crew.maxHp)) return state
+    const healing = medbayHealing(state.systems, CAMPAIGN_TUNING.crewRecoveryAmount)
     return withNextRoute({
       ...state,
       salvage: state.salvage - CAMPAIGN_TUNING.repairCost,
       crew: state.crew.map(crew => crew.hp > 0
-        ? { ...crew, hp: Math.min(crew.maxHp, crew.hp + CAMPAIGN_TUNING.crewRecoveryAmount) }
+        ? { ...crew, hp: Math.min(crew.maxHp, crew.hp + healing) }
         : crew),
     })
   }
